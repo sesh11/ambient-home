@@ -52,15 +52,25 @@ def main() -> None:
         if current_handler is not None:
             await current_handler.announce(text)
 
-    if settings.devin_api_key:
+    if settings.devin_api_key and settings.devin_org_id:
         worker: Worker = DevinWorker(
             settings.devin_api_key,
+            settings.devin_org_id,
             base_url=settings.devin_api_base_url,
             max_acu=settings.devin_max_acu,
         )
     else:
-        logger.warning("DEVIN_API_KEY is not configured; dispatched jobs will fail clearly.")
-        worker = NullWorker()
+        missing = [
+            name
+            for name, value in (
+                ("DEVIN_API_KEY", settings.devin_api_key),
+                ("DEVIN_ORG_ID", settings.devin_org_id),
+            )
+            if not value
+        ]
+        message = f"{', '.join(missing)} is not configured; dispatched jobs will fail clearly."
+        logger.warning(message)
+        worker = NullWorker(error=message)
     job_service = JobService(JobBoard(settings.data_dir / "jobs.json"), worker, announce)
     set_job_service(job_service)
     spend_log = SpendLog(settings.data_dir / "spend.jsonl")
