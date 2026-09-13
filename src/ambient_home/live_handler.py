@@ -128,6 +128,9 @@ class GPTLiveHandler(ConversationHandler):
         self._audio_input_started = False
         self._asleep_heartbeat_at = time.monotonic()
         self._asleep_peak_mic_rms = 0.0
+        self._received_audio_seconds = 0.0
+        self._saw_nonzero_audio = False
+        self._silence_error_logged = False
 
     def _is_connected(self) -> bool:
         """Return whether a Live connection is active."""
@@ -189,6 +192,17 @@ class GPTLiveHandler(ConversationHandler):
             logger.info("Audio input started: %d Hz, frame shape %s", frame[0], frame[1].shape)
             self._audio_input_started = True
         mono = frame_to_mono_int16(frame[1])
+        if frame[0] > 0:
+            self._received_audio_seconds += len(mono) / frame[0]
+        if np.any(mono):
+            self._saw_nonzero_audio = True
+        if self._received_audio_seconds >= 5.0 and not self._saw_nonzero_audio and not self._silence_error_logged:
+            logger.error(
+                "Microphone has delivered only zeros for 5 s. Known Reachy Mini Lite/macOS XMOS startup fault "
+                "(pollen-robotics/reachy_mini#770). Stop reachy-mini-daemon, run "
+                "`uv run ambient-mic-check --reboot-xmos`, then restart both."
+            )
+            self._silence_error_logged = True
         if not self._is_connected():
             self._preroll.append(mono)
         if self.gate.state is GateState.ASLEEP:

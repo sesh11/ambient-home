@@ -3,6 +3,7 @@
 import json
 import base64
 import asyncio
+import logging
 from types import SimpleNamespace
 
 import numpy as np
@@ -201,6 +202,47 @@ def test_session_flushes_preroll_and_records_close(tmp_path) -> None:
     assert connection.session.commentary_text
     assert live_handler.gate.state.value == "asleep"
     assert live_handler.spend_log.path.read_text().count("\n") == 1
+
+
+@pytest.mark.asyncio
+async def test_logs_error_after_five_seconds_of_silence(tmp_path, caplog) -> None:
+    live_handler = handler(tmp_path)
+    caplog.set_level(logging.ERROR, logger="ambient_home.live_handler")
+    frame = np.zeros((8000, 2), dtype=np.float32)
+
+    for _ in range(11):
+        await live_handler.receive((16_000, frame))
+
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert "Microphone has delivered only zeros for 5 s." in errors[0].message
+
+
+@pytest.mark.asyncio
+async def test_nonzero_audio_disables_silence_error(tmp_path, caplog) -> None:
+    live_handler = handler(tmp_path)
+    caplog.set_level(logging.ERROR, logger="ambient_home.live_handler")
+    silent_frame = np.zeros((8000, 2), dtype=np.float32)
+    nonzero_frame = silent_frame.copy()
+    nonzero_frame[0, 0] = 0.5
+
+    await live_handler.receive((16_000, nonzero_frame))
+    for _ in range(10):
+        await live_handler.receive((16_000, silent_frame))
+
+    assert not [record for record in caplog.records if record.levelno == logging.ERROR]
+
+
+@pytest.mark.asyncio
+async def test_does_not_log_silence_error_before_five_seconds(tmp_path, caplog) -> None:
+    live_handler = handler(tmp_path)
+    caplog.set_level(logging.ERROR, logger="ambient_home.live_handler")
+    frame = np.zeros((8000, 2), dtype=np.float32)
+
+    for _ in range(6):
+        await live_handler.receive((16_000, frame))
+
+    assert not [record for record in caplog.records if record.levelno == logging.ERROR]
 
 
 def test_announcement_is_sent_after_greeting(tmp_path) -> None:
