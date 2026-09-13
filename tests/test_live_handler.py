@@ -143,7 +143,7 @@ def handler(tmp_path) -> GPTLiveHandler:
         live_model="gpt-live-1",
         backend_model="gpt-5.6-terra",
         vision_model="gpt-5.6-terra",
-        voice="marin",
+        voice="ballad",
         wake_word="hey_jarvis",
         wake_threshold=0.5,
         preroll_seconds=2,
@@ -312,7 +312,7 @@ def test_session_config_contains_live_audio_and_delegation(tmp_path) -> None:
     config = handler(tmp_path)._session_config()
     assert config["model"] == "gpt-live-1"
     assert config["audio"]["format"] == {"type": "audio/pcm", "rate": 16000}
-    assert config["audio"]["output"]["voice"] == "marin"
+    assert config["audio"]["output"]["voice"] == "ballad"
     assert config["delegation"]["type"] == "responses"
 
 

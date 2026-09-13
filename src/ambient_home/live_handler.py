@@ -418,7 +418,7 @@ class GPTLiveHandler(ConversationHandler):
 
     def get_current_voice(self) -> str:
         """Return the configured Live voice."""
-        return self._voice_override or (self.settings.voice if self.settings.voice in self._VOICES else "marin")
+        return self._voice_override or (self.settings.voice if self.settings.voice in self._VOICES else "ballad")
 
     async def change_voice(self, voice: str) -> str:
         """Set a voice override for the next session."""

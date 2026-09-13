@@ -58,7 +58,7 @@ def settings_from_env() -> AmbientSettings:
         live_model=os.getenv("AMBIENT_LIVE_MODEL", "gpt-live-1"),
         backend_model=backend_model,
         vision_model=os.getenv("AMBIENT_VISION_MODEL") or backend_model,
-        voice=os.getenv("AMBIENT_VOICE", "marin"),
+        voice=os.getenv("AMBIENT_VOICE", "ballad"),
         wake_word=os.getenv("AMBIENT_WAKE_WORD", "hey_jarvis"),
         wake_threshold=_float_env("AMBIENT_WAKE_THRESHOLD", 0.5),
         preroll_seconds=_float_env("AMBIENT_PREROLL_SECONDS", 2.0),
