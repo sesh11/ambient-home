@@ -13,6 +13,18 @@ from numpy.typing import NDArray
 logger = logging.getLogger(__name__)
 
 
+def resolve_model_path(model_name: str) -> str:
+    """Resolve a configured model name to a bundled model when available."""
+    model_path = Path(model_name).expanduser()
+    if model_path.exists():
+        return str(model_path)
+    if "/" not in model_name and "\\" not in model_name:
+        bundled_path = Path(__file__).resolve().parent / "models" / f"{model_name}.onnx"
+        if bundled_path.exists():
+            return str(bundled_path)
+    return model_name
+
+
 class WakeWordDetector(Protocol):
     """Protocol for streaming wake-word detectors."""
 
@@ -54,11 +66,17 @@ class OpenWakeWordDetector:
         from openwakeword.model import Model
         from openwakeword.utils import download_models
 
-        model_path = Path(self.model_name).expanduser()
-        if not model_path.exists() and "/" not in self.model_name and "\\" not in self.model_name:
+        resolved_model = resolve_model_path(self.model_name)
+        model_path = Path(resolved_model).expanduser()
+        if (
+            resolved_model == self.model_name
+            and not model_path.exists()
+            and "/" not in self.model_name
+            and "\\" not in self.model_name
+        ):
             logger.info("Downloading openWakeWord model %s", self.model_name)
             download_models([self.model_name])
-        self._model = Model(wakeword_models=[self.model_name], inference_framework="onnx")
+        self._model = Model(wakeword_models=[resolved_model], inference_framework="onnx")
         return self._model
 
     def feed(self, mono_int16: NDArray[np.int16]) -> bool:

@@ -1,8 +1,10 @@
 """Wake-word detector tests."""
 
+from pathlib import Path
+
 import numpy as np
 
-from ambient_home.wake_word import OpenWakeWordDetector
+from ambient_home.wake_word import OpenWakeWordDetector, resolve_model_path
 
 
 class FakeModel:
@@ -26,3 +28,9 @@ def test_detector_chunks_and_suppresses_retrigger(monkeypatch) -> None:
     assert len(model.chunks) == 1
     assert detector.feed(np.zeros(1280, dtype=np.int16)) is False
     assert len(model.chunks) == 1
+
+
+def test_resolves_bundled_model_path() -> None:
+    resolved = Path(resolve_model_path("hey_alfred"))
+    assert resolved.is_file()
+    assert resolved.parts[-3:] == ("ambient_home", "models", "hey_alfred.onnx")

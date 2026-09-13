@@ -62,6 +62,8 @@ uv run ambient-home
 | `AMBIENT_UI_HOST` | `127.0.0.1` | Local status UI bind address |
 | `AMBIENT_UI_PORT` | `8765` | Local status UI port |
 
+Set `AMBIENT_WAKE_WORD=hey_alfred` to use the bundled custom wake-word model.
+
 ## Jobs and status UI
 
 Say “dispatch a coding task” to hand work to Devin. Jobs are PR-only: Devin
