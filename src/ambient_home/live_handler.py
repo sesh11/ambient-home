@@ -12,6 +12,7 @@ from collections.abc import Callable, Awaitable, AsyncIterator
 import numpy as np
 from openai import AsyncOpenAI
 from numpy.typing import NDArray
+from websockets.exceptions import ConnectionClosed
 from openai.resources.live.live import AsyncLiveConnection
 from openai.types.live.server_event import ServerEvent
 from openai.types.live.built_in_voice import BuiltInVoice
@@ -158,6 +159,11 @@ class GPTLiveHandler(ConversationHandler):
                 await self._run_live_session()
             except asyncio.CancelledError:
                 raise
+            except ConnectionClosed as exc:
+                logger.warning("Live connection dropped (%s); back to sleep.", exc)
+                if self.gate.state is GateState.LIVE:
+                    self.gate.close(CloseReason.ERROR)
+                await asyncio.sleep(2.0)
             except Exception:
                 logger.exception("Live session failed")
                 if self.gate.state is GateState.LIVE:
@@ -331,7 +337,10 @@ class GPTLiveHandler(ConversationHandler):
             reason = self.gate.close_reason_due()
             if reason is not None and self.connection is not None:
                 close_sent = True
-                await self.connection.session.close()
+                try:
+                    await self.connection.session.close()
+                except ConnectionClosed:
+                    pass
 
     async def _handle_event(self, event: dict[str, object]) -> None:
         """Dispatch one decoded Live server event."""
@@ -511,7 +520,10 @@ class GPTLiveHandler(ConversationHandler):
 
     async def _close_connection(self) -> None:
         if self.connection is not None:
-            await self.connection.session.close()
+            try:
+                await self.connection.session.close()
+            except ConnectionClosed:
+                pass
             self.connection = None
 
     async def _wake_robot(self) -> None:
