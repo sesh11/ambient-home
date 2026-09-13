@@ -28,6 +28,7 @@ class AmbientSettings:
     job_poll_s: float = 20.0
     ui_host: str = "127.0.0.1"
     ui_port: int = 8765
+    mic_autorecover: bool = True
 
 
 def _float_env(name: str, default: float) -> float:
@@ -48,6 +49,18 @@ def _int_env(name: str, default: int) -> int:
         return int(value)
     except ValueError as exc:
         raise ValueError(f"{name} must be an integer") from exc
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().lower()
+    if normalized in ("1", "true", "yes", "on"):
+        return True
+    if normalized in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"{name} must be a boolean")
 
 
 def settings_from_env() -> AmbientSettings:
@@ -73,4 +86,5 @@ def settings_from_env() -> AmbientSettings:
         job_poll_s=_float_env("AMBIENT_JOB_POLL_S", 20.0),
         ui_host=os.getenv("AMBIENT_UI_HOST", "127.0.0.1"),
         ui_port=_int_env("AMBIENT_UI_PORT", 8765),
+        mic_autorecover=_bool_env("AMBIENT_MIC_AUTORECOVER", True),
     )

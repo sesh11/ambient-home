@@ -38,8 +38,10 @@ reachy-mini-daemon --sim
 uv run ambient-home
 ```
 
-On first hardware setup, run `uv run ambient-mic-check` before starting the
-assistant to verify that the microphone is producing audio.
+At startup the assistant probes the microphone and, if it is returning only
+zeros, reboots Reachy's XMOS audio processor once before listening (disable
+with `AMBIENT_MIC_AUTORECOVER=false`). `uv run ambient-mic-check` runs the
+same probe standalone.
 
 ## Environment
 
@@ -65,6 +67,7 @@ assistant to verify that the microphone is producing audio.
 | `AMBIENT_JOB_POLL_S` | `20` | Job refresh interval |
 | `AMBIENT_UI_HOST` | `127.0.0.1` | Local status UI bind address |
 | `AMBIENT_UI_PORT` | `8765` | Local status UI port |
+| `AMBIENT_MIC_AUTORECOVER` | `true` | Reboot the XMOS audio processor at startup if the mic is silent |
 
 Set `AMBIENT_WAKE_WORD=hey_alfred` to use the bundled custom wake-word model.
 
@@ -91,23 +94,20 @@ real Devin dispatch.
 
 ### Microphone returns silence
 
-If the asleep heartbeat reports `mic_rms=0`, the Reachy Mini Lite/macOS XMOS
-microphone may be returning all-zero frames. With the daemon running, first
-check the microphone:
-
-```bash
-uv run ambient-mic-check
-```
-
-If it reports silence, stop `reachy-mini-daemon`, reboot the XMOS device, and
-run the check again:
-
-```bash
-uv run ambient-mic-check --reboot-xmos
-```
-
-This is the known
+Reachy Mini Lite's XMOS audio processor can stream all-zero microphone frames
+after a USB connect or power cycle until it is rebooted — the known
 [Reachy Mini XMOS startup issue](https://github.com/pollen-robotics/reachy_mini/issues/770).
+The assistant recovers from this automatically at startup and logs
+`Microphone recovered after audio processor restart`. To reproduce or recover
+by hand:
+
+```bash
+uv run ambient-mic-check                # expect verdict=silent when faulted
+uv run ambient-mic-check --reboot-xmos  # reboots the chip, expect verdict=ok
+```
+
+If the microphone is still silent after the reboot, check the microphone FPC
+cable per Pollen's troubleshooting guide rather than tuning the wake word.
 On macOS, the daemon may need an explicit serial port:
 
 ```bash
