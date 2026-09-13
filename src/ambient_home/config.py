@@ -30,6 +30,10 @@ class AmbientSettings:
     ui_host: str = "127.0.0.1"
     ui_port: int = 8765
     mic_autorecover: bool = True
+    daemon_status_url: str = "http://127.0.0.1:8000/api/daemon/status"
+    daemon_wait_s: float = 60.0
+    daemon_watchdog_s: float = 5.0
+    daemon_watchdog_failures: int = 3
 
 
 def _float_env(name: str, default: float) -> float:
@@ -89,4 +93,8 @@ def settings_from_env() -> AmbientSettings:
         ui_host=os.getenv("AMBIENT_UI_HOST", "127.0.0.1"),
         ui_port=_int_env("AMBIENT_UI_PORT", 8765),
         mic_autorecover=_bool_env("AMBIENT_MIC_AUTORECOVER", True),
+        daemon_status_url=os.getenv("AMBIENT_DAEMON_STATUS_URL", "http://127.0.0.1:8000/api/daemon/status"),
+        daemon_wait_s=_float_env("AMBIENT_DAEMON_WAIT_S", 60.0),
+        daemon_watchdog_s=_float_env("AMBIENT_DAEMON_WATCHDOG_S", 5.0),
+        daemon_watchdog_failures=_int_env("AMBIENT_DAEMON_WATCHDOG_FAILURES", 3),
     )

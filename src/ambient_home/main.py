@@ -11,6 +11,13 @@ from dotenv import load_dotenv
 
 from ambient_home.ui import create_app
 from ambient_home.config import settings_from_env
+from ambient_home.daemon import (
+    DAEMON_LOST_EXIT_CODE,
+    DAEMON_UNAVAILABLE_EXIT_CODE,
+    exit_process,
+    watch_daemon,
+    wait_for_daemon,
+)
 from ambient_home.runtime import set_settings, set_job_service
 from ambient_home.mic_check import ensure_microphone_audio
 from ambient_home.spend_log import SpendLog
@@ -82,8 +89,16 @@ def main() -> None:
     )
     wake_detector = OpenWakeWordDetector(settings.wake_word, settings.wake_threshold)
     if settings.mic_autorecover:
-        ensure_microphone_audio()
-    robot = ReachyMini()
+        try:
+            ensure_microphone_audio()
+        except Exception:
+            logger.exception("Microphone check failed; continuing to daemon wait")
+    if not asyncio.run(wait_for_daemon(settings.daemon_status_url, settings.daemon_wait_s)):
+        exit_process(DAEMON_UNAVAILABLE_EXIT_CODE, "Reachy daemon did not become ready")
+    try:
+        robot = ReachyMini()
+    except (ConnectionError, TimeoutError) as exc:
+        exit_process(DAEMON_UNAVAILABLE_EXIT_CODE, f"could not connect to the Reachy daemon: {exc}")
     movement_manager = MovementManager(current_robot=robot)
 
     def request_sleep() -> dict[str, object]:
@@ -137,10 +152,22 @@ def main() -> None:
     async def run_ui() -> None:
         await ui_server.serve()
 
+    async def daemon_lost(state: str) -> None:
+        exit_process(DAEMON_LOST_EXIT_CODE, f"Reachy daemon lost (state={state}); restart required")
+
+    async def run_daemon_watchdog() -> None:
+        await watch_daemon(
+            settings.daemon_status_url,
+            settings.daemon_watchdog_s,
+            settings.daemon_watchdog_failures,
+            daemon_lost,
+        )
+
     background_factories.extend(
         [
             lambda: job_service.run_poller(settings.job_poll_s),
             run_ui,
+            run_daemon_watchdog,
         ]
     )
     logger.info(

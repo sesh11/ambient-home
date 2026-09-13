@@ -69,6 +69,10 @@ same probe standalone.
 | `AMBIENT_UI_HOST` | `127.0.0.1` | Local status UI bind address |
 | `AMBIENT_UI_PORT` | `8765` | Local status UI port |
 | `AMBIENT_MIC_AUTORECOVER` | `true` | Reboot the XMOS audio processor at startup if the mic is silent |
+| `AMBIENT_DAEMON_STATUS_URL` | `http://127.0.0.1:8000/api/daemon/status` | Reachy daemon status endpoint |
+| `AMBIENT_DAEMON_WAIT_S` | `60` | How long to wait for the daemon at startup before exiting non-zero |
+| `AMBIENT_DAEMON_WATCHDOG_S` | `5` | Daemon liveness poll interval while running |
+| `AMBIENT_DAEMON_WATCHDOG_FAILURES` | `3` | Consecutive failed polls before the app exits for restart |
 
 Set `AMBIENT_WAKE_WORD=hey_alfred` to use the bundled custom wake-word model.
 
@@ -82,6 +86,63 @@ default. Blocked jobs can be answered by voice with `answer_job` or in the UI.
 With the app running, open <http://127.0.0.1:8765/> for live state, daily
 usage, job status, pull-request links, and a stop-session button. Cancelling a
 job through an API is not implemented in this MVP.
+
+## Run as a service (macOS)
+
+Install both processes as per-user LaunchAgents so Reachy comes back on its
+own after a reboot or a USB replug, with no terminal open:
+
+```bash
+cd ~/path/to/ambient-home      # the checkout with your .env
+uv run ambient-install-service
+```
+
+This renders two plists from `src/ambient_home/launchd/` into
+`~/Library/LaunchAgents/` and bootstraps them into `gui/$UID`:
+
+| Agent | Runs | Log |
+| --- | --- | --- |
+| `ai.ambient-home.daemon` | `scripts/run-daemon.sh` → `reachy-mini-daemon --serialport /dev/cu.usbmodem…` | `~/Library/Logs/ambient-home/daemon.log` |
+| `ai.ambient-home.app` | `uv run ambient-home` | `~/Library/Logs/ambient-home/app.log` |
+
+Both use `RunAtLoad`, `KeepAlive` (`SuccessfulExit=false`) and a 10 s
+`ThrottleInterval`. Secrets are not placed in the plists; the app reads `.env`
+from the repo working directory as before.
+
+How the pieces recover:
+
+- `run-daemon.sh` resolves the serial port at start and exits `69` when no
+  `/dev/cu.usbmodem*` exists, then exits `75` if the port vanishes mid-run.
+  launchd restarts it after the throttle interval.
+- `ambient-home` runs the mic check, then polls the daemon status endpoint
+  until it reports `running` (up to `AMBIENT_DAEMON_WAIT_S`) before connecting
+  to Reachy; it exits `69` on timeout. While running, a watchdog polls the
+  daemon every `AMBIENT_DAEMON_WATCHDOG_S` and exits `75` after
+  `AMBIENT_DAEMON_WATCHDOG_FAILURES` consecutive failures so launchd restarts
+  it, which re-runs the XMOS mic recovery.
+
+Useful commands:
+
+```bash
+tail -f ~/Library/Logs/ambient-home/app.log ~/Library/Logs/ambient-home/daemon.log
+launchctl print gui/$UID/ai.ambient-home.app | head -20      # state, pid, last exit
+launchctl kickstart -k gui/$UID/ai.ambient-home.app          # restart the app now
+launchctl bootout gui/$UID/ai.ambient-home.app               # stop temporarily
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ai.ambient-home.app.plist  # start again
+uv run ambient-uninstall-service                             # remove both agents
+uv run ambient-install-service --dry-run                     # preview the plists
+```
+
+Stop the app agent (`bootout`) before running `uv run ambient-home` by hand,
+otherwise two copies compete for the microphone and the status UI port.
+
+Replug acceptance test: with both agents loaded, unplug Reachy and plug it back
+in. Expect in `daemon.log`: `serial port ... vanished` followed within ~10–20 s
+by `starting reachy-mini-daemon on /dev/cu.usbmodem…`. Expect in `app.log`:
+`Reachy daemon check failed (3/3 ...)`, `Exiting with status 75`, then on the
+restart `Microphone check: ok` (or `Microphone recovered after audio processor
+restart`), `Reachy daemon ready`, and the asleep heartbeat. Reachy should be
+listening for the wake word within about 30 s of the replug.
 
 ## Not yet
 
