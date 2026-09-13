@@ -31,7 +31,7 @@ def main() -> None:
     load_dotenv()
     package_root = Path(__file__).parent
     os.environ.setdefault("REACHY_MINI_EXTERNAL_PROFILES_DIRECTORY", str(package_root / "profiles"))
-    os.environ.setdefault("REACHY_MINI_CUSTOM_PROFILE", "jarvis")
+    os.environ.setdefault("REACHY_MINI_CUSTOM_PROFILE", "alfred")
     os.environ.setdefault("REACHY_MINI_EXTERNAL_TOOLS_DIRECTORY", str(package_root / "reachy_tools"))
 
     from reachy_mini import ReachyMini
