@@ -1,6 +1,7 @@
 """OpenAI GPT-Live conversation handler."""
 
 import json
+import time
 import base64
 import asyncio
 import logging
@@ -124,6 +125,9 @@ class GPTLiveHandler(ConversationHandler):
         self._pending_announcements: list[str] = []
         self._background_task_factories = background_tasks if background_tasks is not None else []
         self._background_tasks: list[asyncio.Task[None]] = []
+        self._audio_input_started = False
+        self._asleep_heartbeat_at = time.monotonic()
+        self._asleep_peak_mic_rms = 0.0
 
     def _is_connected(self) -> bool:
         """Return whether a Live connection is active."""
@@ -181,11 +185,29 @@ class GPTLiveHandler(ConversationHandler):
 
     async def receive(self, frame: tuple[int, NDArray[np.int16]]) -> None:
         """Receive a local audio frame in either asleep or Live state."""
+        if not self._audio_input_started:
+            logger.info("Audio input started: %d Hz, frame shape %s", frame[0], frame[1].shape)
+            self._audio_input_started = True
         mono = frame_to_mono_int16(frame[1])
         if not self._is_connected():
             self._preroll.append(mono)
         if self.gate.state is GateState.ASLEEP:
-            if self.wake_detector.feed(mono):
+            self._asleep_peak_mic_rms = max(
+                self._asleep_peak_mic_rms,
+                float(np.sqrt(np.mean(np.square(mono, dtype=np.float32)))),
+            )
+            wake_detected = self.wake_detector.feed(mono)
+            now = time.monotonic()
+            if now - self._asleep_heartbeat_at >= 5.0:
+                logger.info(
+                    "Asleep: mic_rms=%.0f wake_score=%.2f",
+                    self._asleep_peak_mic_rms,
+                    self.wake_detector.take_peak_score(),
+                )
+                self._asleep_heartbeat_at = now
+                self._asleep_peak_mic_rms = 0.0
+            if wake_detected:
+                logger.info("Wake word detected (score=%.2f)", self.wake_detector.last_score)
                 self._wake_event.set()
             return
         if self.connection is not None:

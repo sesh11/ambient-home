@@ -8,13 +8,22 @@ from ambient_home.audio import PrerollBuffer, pcm16_to_base64, frame_to_mono_int
 
 
 def test_frame_to_mono_int16_channels_last() -> None:
-    frame = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32)
-    np.testing.assert_array_equal(frame_to_mono_int16(frame), np.array([16383, 16383], dtype=np.int16))
+    frame = np.column_stack(
+        (
+            np.full(1024, 0.5, dtype=np.float32),
+            np.full(1024, -0.5, dtype=np.float32),
+        )
+    )
+    result = frame_to_mono_int16(frame)
+    assert result.shape == (1024,)
+    np.testing.assert_array_equal(result, np.zeros(1024, dtype=np.int16))
 
 
 def test_frame_to_mono_int16_transposes_channels_first() -> None:
-    frame = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32)
-    np.testing.assert_array_equal(frame_to_mono_int16(frame), np.array([16383, 16383], dtype=np.int16))
+    frame = np.full((2, 1024), 0.5, dtype=np.float32)
+    result = frame_to_mono_int16(frame)
+    assert result.shape == (1024,)
+    np.testing.assert_array_equal(result, np.full(1024, 16383, dtype=np.int16))
 
 
 def test_frame_to_mono_int16_passthrough() -> None:
