@@ -33,6 +33,22 @@ async def test_dispatch_returns_queued_then_starts(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatch_guard_refuses_without_starting_worker(tmp_path) -> None:
+    service = JobService(
+        JobBoard(tmp_path / "jobs.json"),
+        FakeWorker(),
+        lambda text: asyncio.sleep(0),
+        dispatch_guard=lambda: "We're at the monthly limit of 10 ACUs.",
+    )
+    job = await service.dispatch("Fix the tests")
+    await asyncio.sleep(0)
+
+    assert job.status is JobStatus.failed
+    assert job.error == "We're at the monthly limit of 10 ACUs."
+    assert service.board.get(job.id).status is JobStatus.failed
+
+
+@pytest.mark.asyncio
 async def test_poller_announces_terminal_status_once(tmp_path) -> None:
     announcements: list[str] = []
 

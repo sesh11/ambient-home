@@ -3,6 +3,7 @@
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
 
 from ambient_home.runtime import get_job_service
+from ambient_home.jobs.board import JobStatus
 
 
 class DispatchJob(Tool):
@@ -30,6 +31,8 @@ class DispatchJob(Tool):
         repository_value = kwargs.get("repository")
         repository = str(repository_value).strip() if repository_value is not None else None
         job = await get_job_service().dispatch(request, repository or None)
+        if job.status is JobStatus.failed:
+            return {"job_id": job.id, "status": "refused", "message": job.error or "Dispatch refused."}
         return {
             "job_id": job.id,
             "status": "dispatched",

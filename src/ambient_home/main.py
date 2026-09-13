@@ -10,8 +10,9 @@ import uvicorn
 from dotenv import load_dotenv
 
 from ambient_home.ui import create_app
+from ambient_home.costs import CostCaps, CostRates, CostTracker
 from ambient_home.config import settings_from_env
-from ambient_home.runtime import set_settings, set_job_service
+from ambient_home.runtime import set_settings, set_job_service, set_cost_tracker
 from ambient_home.mic_check import ensure_microphone_audio
 from ambient_home.spend_log import SpendLog
 from ambient_home.wake_word import OpenWakeWordDetector
@@ -71,8 +72,7 @@ def main() -> None:
         message = f"{', '.join(missing)} is not configured; dispatched jobs will fail clearly."
         logger.warning(message)
         worker = NullWorker(error=message)
-    job_service = JobService(JobBoard(settings.data_dir / "jobs.json"), worker, announce)
-    set_job_service(job_service)
+    board = JobBoard(settings.data_dir / "jobs.json")
     spend_log = SpendLog(settings.data_dir / "spend.jsonl")
     gate = SessionGate(
         idle_timeout_s=settings.idle_timeout_s,
@@ -80,6 +80,25 @@ def main() -> None:
         daily_budget_s=settings.daily_budget_s,
         seconds_used_today=spend_log.seconds_today(datetime.now().astimezone()),
     )
+    cost_tracker = CostTracker(
+        spend_log,
+        board,
+        rates=CostRates(
+            live_usd_per_minute=settings.live_usd_per_minute,
+            acu_usd=settings.acu_usd,
+        ),
+        caps=CostCaps(live_daily_s=settings.daily_budget_s, acu_monthly=settings.monthly_acu_cap),
+        history_days=settings.cost_history_days,
+        live_session_seconds=lambda: gate.session_elapsed_s,
+    )
+    set_cost_tracker(cost_tracker)
+    job_service = JobService(
+        board,
+        worker,
+        announce,
+        dispatch_guard=lambda: cost_tracker.dispatch_refusal(datetime.now().astimezone()),
+    )
+    set_job_service(job_service)
     wake_detector = OpenWakeWordDetector(settings.wake_word, settings.wake_threshold)
     if settings.mic_autorecover:
         ensure_microphone_audio()
@@ -129,7 +148,7 @@ def main() -> None:
         )
 
     handler = build_handler(settings.voice)
-    ui_app = create_app(status, job_service, request_stop)
+    ui_app = create_app(status, job_service, request_stop, cost_tracker)
     ui_server = uvicorn.Server(
         uvicorn.Config(ui_app, host=settings.ui_host, port=settings.ui_port, log_level="warning")
     )
@@ -140,6 +159,7 @@ def main() -> None:
     background_factories.extend(
         [
             lambda: job_service.run_poller(settings.job_poll_s),
+            lambda: cost_tracker.run_alert_poller(settings.job_poll_s, announce),
             run_ui,
         ]
     )

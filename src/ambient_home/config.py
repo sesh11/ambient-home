@@ -26,6 +26,10 @@ class AmbientSettings:
     devin_org_id: str | None = None
     devin_api_base_url: str = "https://api.devin.ai"
     devin_max_acu: int = 5
+    monthly_acu_cap: float = 100.0
+    live_usd_per_minute: float = 0.3
+    acu_usd: float = 2.25
+    cost_history_days: int = 7
     job_poll_s: float = 20.0
     ui_host: str = "127.0.0.1"
     ui_port: int = 8765
@@ -85,6 +89,10 @@ def settings_from_env() -> AmbientSettings:
         devin_org_id=os.getenv("DEVIN_ORG_ID") or None,
         devin_api_base_url=os.getenv("DEVIN_API_BASE_URL", "https://api.devin.ai"),
         devin_max_acu=_int_env("AMBIENT_DEVIN_MAX_ACU", 5),
+        monthly_acu_cap=_float_env("AMBIENT_MONTHLY_ACU_CAP", 100.0),
+        live_usd_per_minute=_float_env("AMBIENT_LIVE_USD_PER_MINUTE", 0.3),
+        acu_usd=_float_env("AMBIENT_ACU_USD", 2.25),
+        cost_history_days=_int_env("AMBIENT_COST_HISTORY_DAYS", 7),
         job_poll_s=_float_env("AMBIENT_JOB_POLL_S", 20.0),
         ui_host=os.getenv("AMBIENT_UI_HOST", "127.0.0.1"),
         ui_port=_int_env("AMBIENT_UI_PORT", 8765),

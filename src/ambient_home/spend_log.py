@@ -1,9 +1,13 @@
 """Persistent local Live audio spend accounting."""
 
+import logging
 from pathlib import Path
 from datetime import date, datetime
 
 from pydantic import BaseModel
+
+
+logger = logging.getLogger(__name__)
 
 
 class SpendRecord(BaseModel):
@@ -31,15 +35,24 @@ class SpendLog:
 
     def seconds_today(self, now: datetime) -> float:
         """Sum records whose start date is the local date of ``now``."""
-        if not self.path.exists():
-            return 0.0
-        total = 0.0
         target_date: date = now.astimezone().date()
+        return self.seconds_by_day(target_date, target_date).get(target_date, 0.0)
+
+    def seconds_by_day(self, first_day: date, last_day: date) -> dict[date, float]:
+        """Sum seconds per local start date across an inclusive date range."""
+        totals: dict[date, float] = {}
+        if not self.path.exists():
+            return totals
         with self.path.open(encoding="utf-8") as handle:
             for line in handle:
                 if not line.strip():
                     continue
-                record = SpendRecord.model_validate_json(line)
-                if record.started_at.astimezone().date() == target_date:
-                    total += record.seconds
-        return total
+                try:
+                    record = SpendRecord.model_validate_json(line)
+                except ValueError:
+                    logger.warning("Skipping unreadable spend record in %s", self.path)
+                    continue
+                day = record.started_at.astimezone().date()
+                if first_day <= day <= last_day:
+                    totals[day] = totals.get(day, 0.0) + record.seconds
+        return totals

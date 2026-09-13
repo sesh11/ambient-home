@@ -10,20 +10,35 @@ from ambient_home.jobs.worker import Worker
 
 logger = logging.getLogger(__name__)
 Announcer = Callable[[str], Awaitable[None]]
+DispatchGuard = Callable[[], str | None]
 
 
 class JobService:
     """Coordinate a persistent job board with a remote worker."""
 
-    def __init__(self, board: JobBoard, worker: Worker, announcer: Announcer) -> None:
-        """Configure job persistence, execution, and spoken announcements."""
+    def __init__(
+        self,
+        board: JobBoard,
+        worker: Worker,
+        announcer: Announcer,
+        dispatch_guard: DispatchGuard = lambda: None,
+    ) -> None:
+        """Configure job persistence, execution, spoken announcements, and the spend guard."""
         self.board = board
         self.worker = worker
         self.announcer = announcer
+        self.dispatch_guard = dispatch_guard
 
     async def dispatch(self, request: str, repository: str | None = None) -> Job:
-        """Persist a queued job and start it without blocking the caller."""
+        """Persist a queued job and start it unless a spend cap refuses new work."""
         job = Job(request=request, repository=repository, worker=self.worker.name)
+        refusal = self.dispatch_guard()
+        if refusal is not None:
+            job.status = JobStatus.failed
+            job.error = refusal
+            job.announced_status = JobStatus.failed
+            self.board.add(job)
+            return job
         self.board.add(job)
         asyncio.create_task(self._start(job), name=f"job-start-{job.id}")
         return job
@@ -61,6 +76,8 @@ class JobService:
                 "request": job.request,
                 "pr_url": job.pr_url,
                 "question": job.question,
+                "error": job.error,
+                "acus_consumed": job.acus_consumed,
             }
             for job in self.board.recent()
         ]
