@@ -61,7 +61,8 @@ same probe standalone.
 | `AMBIENT_DAILY_BUDGET_S` | `3600` | Daily audio budget |
 | `AMBIENT_DATA_DIR` | `~/.ambient-home` | Spend log directory |
 | `AMBIENT_TRANSCRIPT_FINALIZE_S` | `1.0` | Transcript debounce |
-| `DEVIN_API_KEY` | unset | Devin API credential; jobs fail clearly when unset |
+| `DEVIN_API_KEY` | unset | Devin service-user API key (`cog_…`) |
+| `DEVIN_ORG_ID` | unset | Devin organization ID (`org-…`, from app.devin.ai → Settings → Organization); required together with a `cog_` service-user API key |
 | `DEVIN_API_BASE_URL` | `https://api.devin.ai` | Devin API base URL |
 | `AMBIENT_DEVIN_MAX_ACU` | `5` | Maximum ACU per Devin session |
 | `AMBIENT_JOB_POLL_S` | `20` | Job refresh interval |

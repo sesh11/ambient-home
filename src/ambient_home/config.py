@@ -23,6 +23,7 @@ class AmbientSettings:
     data_dir: Path
     transcript_finalize_s: float
     devin_api_key: str | None = None
+    devin_org_id: str | None = None
     devin_api_base_url: str = "https://api.devin.ai"
     devin_max_acu: int = 5
     job_poll_s: float = 20.0
@@ -81,6 +82,7 @@ def settings_from_env() -> AmbientSettings:
         data_dir=Path(os.getenv("AMBIENT_DATA_DIR", "~/.ambient-home")).expanduser(),
         transcript_finalize_s=_float_env("AMBIENT_TRANSCRIPT_FINALIZE_S", 1.0),
         devin_api_key=os.getenv("DEVIN_API_KEY") or None,
+        devin_org_id=os.getenv("DEVIN_ORG_ID") or None,
         devin_api_base_url=os.getenv("DEVIN_API_BASE_URL", "https://api.devin.ai"),
         devin_max_acu=_int_env("AMBIENT_DEVIN_MAX_ACU", 5),
         job_poll_s=_float_env("AMBIENT_JOB_POLL_S", 20.0),
