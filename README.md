@@ -47,6 +47,7 @@ uv run ambient-home
 | `AMBIENT_BACKEND_MODEL` | `gpt-5.6-terra` | Responses delegation model |
 | `AMBIENT_VISION_MODEL` | backend model | Vision tool model |
 | `AMBIENT_VOICE` | `ballad` | Live voice |
+| `AMBIENT_LOG_LEVEL` | `INFO` | Application log level |
 | `AMBIENT_WAKE_WORD` | `hey_jarvis` | openWakeWord model |
 | `AMBIENT_WAKE_THRESHOLD` | `0.5` | Wake confidence threshold |
 | `AMBIENT_PREROLL_SECONDS` | `2.0` | Audio retained before wake |

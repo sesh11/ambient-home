@@ -28,8 +28,13 @@ def resolve_model_path(model_name: str) -> str:
 class WakeWordDetector(Protocol):
     """Protocol for streaming wake-word detectors."""
 
+    last_score: float
+
     def feed(self, mono_int16: NDArray[np.int16]) -> bool:
         """Feed mono 16 kHz samples and report one-shot detections."""
+
+    def take_peak_score(self) -> float:
+        """Return and reset the maximum score since the previous call."""
 
     def reset(self) -> None:
         """Reset detector state."""
@@ -56,6 +61,8 @@ class OpenWakeWordDetector:
         self._model: object | None = None
         self._buffer = np.empty(0, dtype=np.int16)
         self._suppress_until = 0.0
+        self.last_score = 0.0
+        self.peak_score = 0.0
 
     def _load_model(self) -> object:
         if self._model is not None:
@@ -92,6 +99,8 @@ class OpenWakeWordDetector:
                 continue
             predictions = model.predict(chunk)  # type: ignore[attr-defined]
             score = max((float(value) for value in predictions.values()), default=0.0)
+            self.last_score = score
+            self.peak_score = max(self.peak_score, score)
             if score >= self.threshold:
                 detected = True
                 self._suppress_until = now + self._SUPPRESSION_S
@@ -99,10 +108,14 @@ class OpenWakeWordDetector:
                 break
         return detected
 
+    def take_peak_score(self) -> float:
+        """Return and reset the maximum score since the previous call."""
+        score = self.peak_score
+        self.peak_score = 0.0
+        return score
+
     def reset(self) -> None:
         """Reset model prediction state and pending audio."""
         self._buffer = np.empty(0, dtype=np.int16)
         if self._model is not None:
-            reset = getattr(self._model, "reset", None)
-            if callable(reset):
-                reset()
+            self._model.reset()  # type: ignore[attr-defined]

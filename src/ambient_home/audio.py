@@ -14,7 +14,7 @@ def frame_to_mono_int16(audio: NDArray[np.generic]) -> NDArray[np.int16]:
     if samples.ndim not in (1, 2):
         raise ValueError("audio frames must be one- or two-dimensional")
     if samples.ndim == 2:
-        if samples.shape[1] <= samples.shape[0]:
+        if samples.shape[0] < samples.shape[1]:
             samples = samples.T
         samples = np.mean(samples, axis=1)
     return np.asarray(audio_to_int16(np.asarray(samples)), dtype=np.int16)

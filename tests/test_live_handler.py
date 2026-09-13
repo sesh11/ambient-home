@@ -41,8 +41,13 @@ class FakeMovement:
 
 
 class FakeDetector:
+    last_score = 0.0
+
     def feed(self, samples: np.ndarray) -> bool:
         return False
+
+    def take_peak_score(self) -> float:
+        return 0.0
 
     def reset(self) -> None:
         pass

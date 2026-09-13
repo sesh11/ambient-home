@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     """Start ambient-home and keep wake-word listening active."""
     load_dotenv()
+    log_level = logging.getLevelNamesMapping().get(os.getenv("AMBIENT_LOG_LEVEL", "INFO").upper(), logging.INFO)
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     package_root = Path(__file__).parent
     os.environ.setdefault("REACHY_MINI_EXTERNAL_PROFILES_DIRECTORY", str(package_root / "profiles"))
     os.environ.setdefault("REACHY_MINI_CUSTOM_PROFILE", "alfred")
