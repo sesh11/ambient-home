@@ -7,6 +7,11 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from openai.types.live.server_event import ServerEvent
+from openai.types.live.session_usage import SessionUsage
+from openai.types.live.session_resource import SessionResource
+from openai.types.live.session_closed_event import SessionClosedEvent
+from openai.types.live.session_started_event import SessionStartedEvent
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 from reachy_mini_conversation_app.tools.tool_constants import ToolState
 from reachy_mini_conversation_app.tools.background_tool_manager import ToolNotification
@@ -27,6 +32,12 @@ class FakeMovement:
 
     def set_speaking(self, value: bool) -> None:
         self.speaking = value
+
+    def start(self) -> None:
+        pass
+
+    def stop(self, *, reset_to_neutral: bool) -> None:
+        pass
 
 
 class FakeDetector:
@@ -77,7 +88,7 @@ class FakeResponse:
 
 
 class FakeConnection:
-    def __init__(self, events: list[dict[str, object]]) -> None:
+    def __init__(self, events: list[ServerEvent]) -> None:
         self.session = FakeSession()
         self.response = FakeResponse()
         self.events = events
@@ -116,7 +127,12 @@ class FakeClient:
 
 def handler(tmp_path) -> GPTLiveHandler:
     movement = FakeMovement()
-    robot = SimpleNamespace(enable_motors=lambda: None, wake_up=lambda: None, goto_sleep=lambda: None)
+    robot = SimpleNamespace(
+        enable_motors=lambda: None,
+        wake_up=lambda: None,
+        disable_wobbling=lambda: None,
+        goto_sleep=lambda: None,
+    )
     deps = ToolDependencies(
         reachy_mini=robot,
         movement_manager=movement,
@@ -152,13 +168,23 @@ def handler(tmp_path) -> GPTLiveHandler:
     )
 
 
+def session_resource() -> SessionResource:
+    return SessionResource(id="session-1", expires_at=1_000_000, model="gpt-live-1", status="active")
+
+
 def test_session_flushes_preroll_and_records_close(tmp_path) -> None:
     live_handler = handler(tmp_path)
     live_handler._preroll.append(np.array([10, 11], dtype=np.int16))
     connection = FakeConnection(
         [
-            {"type": "session.started"},
-            {"type": "session.closed", "reason": "done"},
+            SessionStartedEvent(event_id="event-1", session=session_resource(), type="session.started"),
+            SessionClosedEvent(
+                event_id="event-2",
+                reason="close_requested",
+                session=session_resource(),
+                usage=SessionUsage(seconds=2.0),
+                type="session.closed",
+            ),
         ]
     )
     live_handler.client = FakeClient(connection)
@@ -177,11 +203,29 @@ async def test_transcript_delta_finalizes_user_output(tmp_path) -> None:
     live_handler = handler(tmp_path)
     live_handler.gate.wake()
     await live_handler._handle_event({"type": "session.input_transcript.delta", "delta": "hello"})
-    await asyncio.sleep(0.02)
+    await asyncio.sleep(0.04)
 
-    outputs = [await live_handler.output_queue.get(), await live_handler.output_queue.get()]
+    outputs = []
+    while not live_handler.output_queue.empty():
+        outputs.append(live_handler.output_queue.get_nowait())
     assert any(output.args[0]["role"] == "user" for output in outputs)
     assert live_handler.gate.session_elapsed_s >= 0
+
+
+@pytest.mark.asyncio
+async def test_assistant_deltas_do_not_delay_user_transcript(tmp_path) -> None:
+    live_handler = handler(tmp_path)
+    live_handler.gate.wake()
+    await live_handler._handle_event({"type": "session.input_transcript.delta", "delta": "hello"})
+    await asyncio.sleep(0.005)
+    await live_handler._handle_event({"type": "session.output_transcript.delta", "delta": "answer"})
+    await asyncio.sleep(0.04)
+
+    outputs = []
+    while not live_handler.output_queue.empty():
+        outputs.append(live_handler.output_queue.get_nowait())
+    assert any(output.args[0]["role"] == "user" for output in outputs)
+    assert any(output.args[0]["role"] == "assistant" for output in outputs)
 
 
 @pytest.mark.asyncio

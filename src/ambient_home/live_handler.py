@@ -1,18 +1,20 @@
 """OpenAI GPT-Live conversation handler."""
 
-import os
 import json
 import base64
 import asyncio
 import logging
 from datetime import datetime, timezone
 from dataclasses import dataclass
+from collections.abc import AsyncIterator
 
 import numpy as np
 from openai import AsyncOpenAI
 from numpy.typing import NDArray
 from openai.resources.live.live import AsyncLiveConnection
+from openai.types.live.server_event import ServerEvent
 from openai.types.live.built_in_voice import BuiltInVoice
+from reachy_mini_conversation_app.config import set_custom_profile
 from reachy_mini_conversation_app.prompts import get_session_instructions, get_session_greeting_prompt
 from openai.types.live.function_tool_param import FunctionToolParam
 from openai.types.live.session_config_param import SessionConfigParam, DelegationResponses
@@ -110,8 +112,8 @@ class GPTLiveHandler(ConversationHandler):
         self._voice_override = startup_voice if startup_voice in self._VOICES else None
         self._user_transcript = ""
         self._assistant_transcript = ""
-        self._last_transcript_at = 0.0
-        self._transcript_task: asyncio.Task[None] | None = None
+        self._user_transcript_task: asyncio.Task[None] | None = None
+        self._assistant_transcript_task: asyncio.Task[None] | None = None
         self._speaking_task: asyncio.Task[None] | None = None
         self._in_flight_tool_calls: set[str] = set()
         self._last_usage_seconds: float | None = None
@@ -152,8 +154,10 @@ class GPTLiveHandler(ConversationHandler):
         self._wake_event.set()
         if self.connection is not None:
             await self._close_connection()
-        if self._transcript_task is not None:
-            self._transcript_task.cancel()
+        if self._user_transcript_task is not None:
+            self._user_transcript_task.cancel()
+        if self._assistant_transcript_task is not None:
+            self._assistant_transcript_task.cancel()
         if self._speaking_task is not None:
             self._speaking_task.cancel()
         await self.tool_manager.shutdown()
@@ -218,8 +222,9 @@ class GPTLiveHandler(ConversationHandler):
             started = False
             try:
                 async with asyncio.timeout(10.0):
-                    async for event in connection:
-                        event_data = self._event_data(event)
+                    event_stream: AsyncIterator[ServerEvent] = connection.__aiter__()
+                    async for event in event_stream:
+                        event_data = event.model_dump()
                         await self._handle_event(event_data)
                         if event_data.get("type") == "session.started":
                             started = True
@@ -232,7 +237,7 @@ class GPTLiveHandler(ConversationHandler):
             self.connection = connection
             self.gate.wake()
             self._session_started_at = datetime.now(timezone.utc)
-            self._wake_robot()
+            await self._wake_robot()
             self.tool_manager.start_up(tool_callbacks=[self._handle_tool_result])
             preroll = self._preroll.drain()
             if preroll.size:
@@ -242,8 +247,9 @@ class GPTLiveHandler(ConversationHandler):
                 await connection.session.commentary.append(content=greeting, delegation_id=None)
             close_watch = asyncio.create_task(self._gate_watch())
             try:
-                async for event in connection:
-                    await self._handle_event(self._event_data(event))
+                event_stream = connection.__aiter__()
+                async for event in event_stream:
+                    await self._handle_event(event.model_dump())
                     if self._last_server_reason is not None:
                         break
             finally:
@@ -258,7 +264,7 @@ class GPTLiveHandler(ConversationHandler):
                 elapsed = self.gate.close(reason)
                 self._record_spend(elapsed, reason)
                 self._session_started_at = None
-                self._sleep_robot()
+                await self._sleep_robot()
 
     async def _gate_watch(self) -> None:
         """Close a session when its gate reports a due limit."""
@@ -284,16 +290,14 @@ class GPTLiveHandler(ConversationHandler):
         elif event_type == "session.input_transcript.delta":
             self._user_transcript += str(event.get("delta", ""))
             self.gate.note_user_speech()
-            self._last_transcript_at = asyncio.get_running_loop().time()
             self._mark_activity("user_transcript_delta")
             self.deps.movement_manager.set_listening(True)
             await self.output_queue.put(AdditionalOutputs({"role": "user_partial", "content": self._user_transcript}))
-            self._arm_transcript_timer()
+            self._arm_user_transcript_timer()
         elif event_type == "session.output_transcript.delta":
             self._assistant_transcript += str(event.get("delta", ""))
-            self._last_transcript_at = asyncio.get_running_loop().time()
             self._mark_activity("assistant_transcript_delta")
-            self._arm_transcript_timer()
+            self._arm_assistant_transcript_timer()
         elif event_type == "session.delegation.created":
             delegation = event.get("delegation")
             await self.output_queue.put(
@@ -370,8 +374,7 @@ class GPTLiveHandler(ConversationHandler):
 
     async def apply_personality(self, profile: str | None) -> str:
         """Apply a profile for the next session."""
-        if profile is not None and profile.strip():
-            os.environ["REACHY_MINI_CUSTOM_PROFILE"] = profile.strip()
+        set_custom_profile(profile)
         initialize_tools(self.instance_path, force=True)
         return "Applied personality. Takes effect on the next wake."
 
@@ -381,7 +384,7 @@ class GPTLiveHandler(ConversationHandler):
 
     def get_current_voice(self) -> str:
         """Return the configured Live voice."""
-        return self._voice_override or self.settings.voice if self.settings.voice in self._VOICES else "marin"
+        return self._voice_override or (self.settings.voice if self.settings.voice in self._VOICES else "marin")
 
     async def change_voice(self, voice: str) -> str:
         """Set a voice override for the next session."""
@@ -400,22 +403,12 @@ class GPTLiveHandler(ConversationHandler):
             last_close_reason=self.gate.last_close_reason,
         )
 
-    def _event_data(self, event: object) -> dict[str, object]:
-        if isinstance(event, dict):
-            return event
-        model_dump_json = getattr(event, "model_dump_json", None)
-        if callable(model_dump_json):
-            dumped = json.loads(model_dump_json())
-            if isinstance(dumped, dict):
-                return dumped
-        return {"type": "unknown"}
+    def _arm_user_transcript_timer(self) -> None:
+        if self._user_transcript_task is not None:
+            self._user_transcript_task.cancel()
+        self._user_transcript_task = asyncio.create_task(self._finalize_user_transcript())
 
-    def _arm_transcript_timer(self) -> None:
-        if self._transcript_task is not None:
-            self._transcript_task.cancel()
-        self._transcript_task = asyncio.create_task(self._finalize_transcripts())
-
-    async def _finalize_transcripts(self) -> None:
+    async def _finalize_user_transcript(self) -> None:
         await asyncio.sleep(self.settings.transcript_finalize_s)
         if self._user_transcript:
             text = self._user_transcript
@@ -423,6 +416,14 @@ class GPTLiveHandler(ConversationHandler):
             await self.output_queue.put(AdditionalOutputs({"role": "user", "content": text}))
             self._emit_transcript("user", text, True)
             self.deps.movement_manager.set_listening(False)
+
+    def _arm_assistant_transcript_timer(self) -> None:
+        if self._assistant_transcript_task is not None:
+            self._assistant_transcript_task.cancel()
+        self._assistant_transcript_task = asyncio.create_task(self._finalize_assistant_transcript())
+
+    async def _finalize_assistant_transcript(self) -> None:
+        await asyncio.sleep(self.settings.transcript_finalize_s)
         if self._assistant_transcript:
             text = self._assistant_transcript
             self._assistant_transcript = ""
@@ -443,20 +444,29 @@ class GPTLiveHandler(ConversationHandler):
             await self.connection.session.close()
             self.connection = None
 
-    def _wake_robot(self) -> None:
+    async def _wake_robot(self) -> None:
         try:
-            self.deps.reachy_mini.enable_motors()
-            self.deps.reachy_mini.wake_up()
+            await asyncio.to_thread(self.deps.reachy_mini.enable_motors)
+            await asyncio.to_thread(self.deps.reachy_mini.wake_up)
+            await asyncio.to_thread(self.deps.movement_manager.start)
             self.deps.movement_manager.set_listening(False)
         except Exception:
             logger.exception("Failed to wake robot")
 
-    def _sleep_robot(self) -> None:
+    async def _sleep_robot(self) -> None:
         try:
-            self.deps.movement_manager.clear_move_queue()
-            self.deps.reachy_mini.goto_sleep()
+            try:
+                await asyncio.to_thread(self.deps.reachy_mini.disable_wobbling)
+            except Exception:
+                logger.debug("Failed to disable robot wobbling before sleep", exc_info=True)
+            await asyncio.to_thread(self.deps.movement_manager.stop, reset_to_neutral=False)
+            await asyncio.to_thread(self.deps.reachy_mini.goto_sleep)
         except Exception:
             logger.exception("Failed to put robot to sleep")
+
+    async def prepare_asleep(self) -> None:
+        """Put the robot in its sleep pose before audio streaming starts."""
+        await self._sleep_robot()
 
     def _record_spend(self, elapsed: float, reason: CloseReason) -> None:
         ended_at = datetime.now(timezone.utc)

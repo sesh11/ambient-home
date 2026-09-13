@@ -1,6 +1,7 @@
 """Ambient-home command-line entry point."""
 
 import os
+import asyncio
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -78,6 +79,6 @@ def main() -> None:
         settings.wake_word,
         settings.daily_budget_s,
     )
-    movement_manager.start()
+    asyncio.run(handler.prepare_asleep())
     stream = LocalStream(handler, robot, handler_factory=build_handler, startup_voice=settings.voice)
     stream.launch()
