@@ -198,6 +198,39 @@ def test_session_flushes_preroll_and_records_close(tmp_path) -> None:
     assert live_handler.spend_log.path.read_text().count("\n") == 1
 
 
+def test_announcement_is_sent_after_greeting(tmp_path) -> None:
+    live_handler = handler(tmp_path)
+    asyncio.run(live_handler.announce("Your job is finished."))
+    connection = FakeConnection(
+        [
+            SessionStartedEvent(event_id="event-1", session=session_resource(), type="session.started"),
+            SessionClosedEvent(
+                event_id="event-2",
+                reason="close_requested",
+                session=session_resource(),
+                usage=SessionUsage(seconds=1.0),
+                type="session.closed",
+            ),
+        ]
+    )
+    live_handler.client = FakeClient(connection)
+
+    asyncio.run(live_handler._run_live_session())
+
+    assert connection.session.commentary_text[-1] == "While you were away: Your job is finished."
+
+
+@pytest.mark.asyncio
+async def test_request_stop_closes_session_via_gate_watch(tmp_path) -> None:
+    live_handler = handler(tmp_path)
+    connection = FakeConnection([])
+    live_handler.connection = connection
+    live_handler.gate.wake()
+    await live_handler.request_stop()
+    await live_handler._gate_watch()
+    assert connection.session.closed == 1
+
+
 @pytest.mark.asyncio
 async def test_transcript_delta_finalizes_user_output(tmp_path) -> None:
     live_handler = handler(tmp_path)
