@@ -158,6 +158,7 @@ name = "ambient-home"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -167,6 +168,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "reachy-mini-conversation-app" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -180,6 +182,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "numpy" },
     { name = "onnxruntime" },
@@ -188,6 +191,7 @@ requires-dist = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "reachy-mini-conversation-app", git = "https://github.com/pollen-robotics/reachy_mini_conversation_app.git?rev=f885bf421764ff7ff18dff26ae77b24b99a3af8c" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata.requires-dev]

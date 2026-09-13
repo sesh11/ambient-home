@@ -5,14 +5,22 @@ import asyncio
 import logging
 from pathlib import Path
 from datetime import datetime
+from collections.abc import Callable, Awaitable
 
+import uvicorn
 from dotenv import load_dotenv
 
+from ambient_home.ui import create_app
 from ambient_home.config import settings_from_env
-from ambient_home.runtime import set_settings
+from ambient_home.runtime import set_settings, set_job_service
 from ambient_home.spend_log import SpendLog
 from ambient_home.wake_word import OpenWakeWordDetector
-from ambient_home.session_gate import CloseReason, SessionGate
+from ambient_home.jobs.board import JobBoard
+from ambient_home.jobs.devin import NullWorker, DevinWorker
+from ambient_home.jobs.worker import Worker
+from ambient_home.jobs.service import JobService
+from ambient_home.live_handler import LiveStatus
+from ambient_home.session_gate import GateState, CloseReason, SessionGate
 
 
 logger = logging.getLogger(__name__)
@@ -35,6 +43,24 @@ def main() -> None:
 
     settings = settings_from_env()
     set_settings(settings)
+    current_handler: GPTLiveHandler | None = None
+    background_factories: list[Callable[[], Awaitable[None]]] = []
+
+    async def announce(text: str) -> None:
+        if current_handler is not None:
+            await current_handler.announce(text)
+
+    if settings.devin_api_key:
+        worker: Worker = DevinWorker(
+            settings.devin_api_key,
+            base_url=settings.devin_api_base_url,
+            max_acu=settings.devin_max_acu,
+        )
+    else:
+        logger.warning("DEVIN_API_KEY is not configured; dispatched jobs will fail clearly.")
+        worker = NullWorker()
+    job_service = JobService(JobBoard(settings.data_dir / "jobs.json"), worker, announce)
+    set_job_service(job_service)
     spend_log = SpendLog(settings.data_dir / "spend.jsonl")
     gate = SessionGate(
         idle_timeout_s=settings.idle_timeout_s,
@@ -61,16 +87,48 @@ def main() -> None:
 
     def build_handler(startup_voice: str | None = None) -> GPTLiveHandler:
         """Build a fresh wake-gated Live handler."""
-        return GPTLiveHandler(
+        nonlocal current_handler
+        current_handler = GPTLiveHandler(
             deps,
             settings,
             wake_detector=wake_detector,
             gate=gate,
             spend_log=spend_log,
             startup_voice=startup_voice,
+            background_tasks=background_factories,
+        )
+        return current_handler
+
+    async def request_stop() -> None:
+        if current_handler is not None:
+            await current_handler.request_stop()
+
+    def status() -> LiveStatus:
+        if current_handler is not None:
+            return current_handler.status()
+        return LiveStatus(
+            state=GateState.ASLEEP,
+            session_elapsed_s=0.0,
+            seconds_used_today=gate.seconds_used_today,
+            seconds_remaining_today=gate.seconds_remaining_today,
+            last_close_reason=gate.last_close_reason,
         )
 
     handler = build_handler(settings.voice)
+    ui_app = create_app(status, job_service, request_stop)
+    ui_server = uvicorn.Server(
+        uvicorn.Config(ui_app, host=settings.ui_host, port=settings.ui_port, log_level="warning")
+    )
+
+    async def run_ui() -> None:
+        await ui_server.serve()
+
+    background_factories.extend(
+        [
+            lambda: job_service.run_poller(settings.job_poll_s),
+            run_ui,
+        ]
+    )
     logger.info(
         "Starting ambient-home model=%s backend=%s voice=%s wake=%s daily_budget_s=%s",
         settings.live_model,

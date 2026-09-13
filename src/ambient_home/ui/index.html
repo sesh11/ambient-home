@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ambient-home</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; margin: 2rem auto; max-width: 900px; padding: 0 1rem; }
+    header { align-items: center; display: flex; gap: 1rem; justify-content: space-between; }
+    .badge { border-radius: 999px; color: white; padding: .25rem .75rem; }
+    .asleep { background: #555; } .live { background: #198754; }
+    button { cursor: pointer; } table { border-collapse: collapse; margin-top: 1rem; width: 100%; }
+    td, th { border-bottom: 1px solid #ddd; padding: .6rem; text-align: left; vertical-align: top; }
+    .danger { background: #b42318; border: 0; color: white; padding: .5rem .75rem; }
+    input { max-width: 18rem; padding: .4rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ambient-home</h1>
+    <div>
+      <span id="state" class="badge asleep">ASLEEP</span>
+      <button class="danger" onclick="stopSession()">Stop session</button>
+    </div>
+  </header>
+  <p id="usage">Session: 0s · Today: 0.0 / 0.0 minutes</p>
+  <h2>Jobs</h2>
+  <table>
+    <thead><tr><th>Request</th><th>Status</th><th>PR</th><th>Question</th></tr></thead>
+    <tbody id="jobs"></tbody>
+  </table>
+  <script>
+    async function stopSession() {
+      await fetch("/api/stop", { method: "POST" });
+      await refresh();
+    }
+    async function answer(id) {
+      const input = document.getElementById("answer-" + id);
+      await fetch("/api/jobs/" + encodeURIComponent(id) + "/answer", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({answer: input.value})
+      });
+      input.value = "";
+      await refresh();
+    }
+    async function refresh() {
+      const response = await fetch("/api/status");
+      const data = await response.json();
+      const live = data.live;
+      const badge = document.getElementById("state");
+      badge.textContent = live.state.toUpperCase();
+      badge.className = "badge " + (live.state === "live" ? "live" : "asleep");
+      document.getElementById("usage").textContent =
+        "Session: " + Math.round(live.session_elapsed_s) + "s · Today: " +
+        (live.seconds_used_today / 60).toFixed(1) + " used · " +
+        (live.seconds_remaining_today / 60).toFixed(1) + " remaining minutes";
+      document.getElementById("jobs").innerHTML = data.jobs.map(job => {
+        const question = job.question || "";
+        const answerBox = question ? '<br><input id="answer-' + job.id + '" placeholder="Answer"><button onclick="answer(\'' +
+          job.id + '\')">Send</button>' : "";
+        const pr = job.pr_url ? '<a href="' + job.pr_url + '" target="_blank">PR</a>' : "";
+        return "<tr><td>" + job.request + "</td><td>" + job.status + "</td><td>" + pr +
+          "</td><td>" + question + answerBox + "</td></tr>";
+      }).join("");
+    }
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>

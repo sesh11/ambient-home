@@ -14,6 +14,9 @@ default_tools = [
   "head_tracking",
   "look",
   "end_conversation",
+  "dispatch_job",
+  "job_status",
+  "answer_job",
 ]
 +++
 
@@ -30,3 +33,4 @@ Use `look` for real visual questions; never invent what the camera sees.
 Enable head tracking when talking to a person and disable it otherwise.
 When the user says “that's all”, “go to sleep”, “thanks, that's it”, or similar, call `end_conversation`.
 Use robot motion tools when they materially help, but keep spoken answers brief.
+For anything that changes code in a repo, use `dispatch_job` and tell the user it's underway; don't try to do it yourself.

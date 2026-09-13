@@ -17,6 +17,8 @@ dependencies = [
     "httpx",
     "pydantic",
     "python-dotenv",
+    "fastapi",
+    "uvicorn",
 ]
 
 [dependency-groups]
@@ -42,7 +44,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-ambient_home = ["profiles/**/*.md"]
+ambient_home = ["profiles/**/*.md", "ui/index.html"]
 
 [tool.ruff]
 line-length = 119

@@ -14,7 +14,7 @@ the local robot/media/tools substrate and OpenAI GPT-Live as its brain.
 7. A preroll buffer preserves speech immediately after wake.
 8. Idle, session, and daily audio caps limit spend.
 9. Robot tools remain Pollen-compatible external tools.
-10. Devin dispatch and UI are intentionally deferred.
+10. Devin dispatch and the loopback status UI run as background services.
 
 ## Install
 
@@ -55,8 +55,30 @@ uv run ambient-home
 | `AMBIENT_DAILY_BUDGET_S` | `3600` | Daily audio budget |
 | `AMBIENT_DATA_DIR` | `~/.ambient-home` | Spend log directory |
 | `AMBIENT_TRANSCRIPT_FINALIZE_S` | `1.0` | Transcript debounce |
+| `DEVIN_API_KEY` | unset | Devin API credential; jobs fail clearly when unset |
+| `DEVIN_API_BASE_URL` | `https://api.devin.ai` | Devin API base URL |
+| `AMBIENT_DEVIN_MAX_ACU` | `5` | Maximum ACU per Devin session |
+| `AMBIENT_JOB_POLL_S` | `20` | Job refresh interval |
+| `AMBIENT_UI_HOST` | `127.0.0.1` | Local status UI bind address |
+| `AMBIENT_UI_PORT` | `8765` | Local status UI port |
+
+## Jobs and status UI
+
+Say “dispatch a coding task” to hand work to Devin. Jobs are PR-only: Devin
+must not merge, push directly to `main`/`master`, deploy, or change branch
+protection or CI security settings. No secrets are shared with Devin by
+default. Blocked jobs can be answered by voice with `answer_job` or in the UI.
+
+With the app running, open <http://127.0.0.1:8765/> for live state, daily
+usage, job status, pull-request links, and a stop-session button. Cancelling a
+job through an API is not implemented in this MVP.
 
 ## Not yet
 
-Devin job dispatch and the companion UI are coming later. Barge-in audio queue
-flushing is also pending hardware verification.
+TTS announcements while asleep, provider workers other than Devin, and remote
+job cancellation are not yet implemented. Barge-in audio queue flushing is
+also pending hardware verification.
+
+Hardware verification still needed: microphone/speaker behavior, AEC,
+barge-in flushing, direction of arrival, a real OpenAI Live session, and a
+real Devin dispatch.

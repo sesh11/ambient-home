@@ -22,6 +22,12 @@ class AmbientSettings:
     daily_budget_s: float
     data_dir: Path
     transcript_finalize_s: float
+    devin_api_key: str | None = None
+    devin_api_base_url: str = "https://api.devin.ai"
+    devin_max_acu: int = 5
+    job_poll_s: float = 20.0
+    ui_host: str = "127.0.0.1"
+    ui_port: int = 8765
 
 
 def _float_env(name: str, default: float) -> float:
@@ -32,6 +38,16 @@ def _float_env(name: str, default: float) -> float:
         return float(value)
     except ValueError as exc:
         raise ValueError(f"{name} must be a number") from exc
+
+
+def _int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
 
 
 def settings_from_env() -> AmbientSettings:
@@ -51,4 +67,10 @@ def settings_from_env() -> AmbientSettings:
         daily_budget_s=_float_env("AMBIENT_DAILY_BUDGET_S", 3600.0),
         data_dir=Path(os.getenv("AMBIENT_DATA_DIR", "~/.ambient-home")).expanduser(),
         transcript_finalize_s=_float_env("AMBIENT_TRANSCRIPT_FINALIZE_S", 1.0),
+        devin_api_key=os.getenv("DEVIN_API_KEY") or None,
+        devin_api_base_url=os.getenv("DEVIN_API_BASE_URL", "https://api.devin.ai"),
+        devin_max_acu=_int_env("AMBIENT_DEVIN_MAX_ACU", 5),
+        job_poll_s=_float_env("AMBIENT_JOB_POLL_S", 20.0),
+        ui_host=os.getenv("AMBIENT_UI_HOST", "127.0.0.1"),
+        ui_port=_int_env("AMBIENT_UI_PORT", 8765),
     )

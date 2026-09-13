@@ -6,7 +6,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from dataclasses import dataclass
-from collections.abc import AsyncIterator
+from collections.abc import Callable, Awaitable, AsyncIterator
 
 import numpy as np
 from openai import AsyncOpenAI
@@ -93,6 +93,7 @@ class GPTLiveHandler(ConversationHandler):
         instance_path: str | None = None,
         startup_voice: str | None = None,
         client: AsyncOpenAI | None = None,
+        background_tasks: list[Callable[[], Awaitable[None]]] | None = None,
     ) -> None:
         """Initialize the Live handler and local wake gate."""
         super().__init__()
@@ -120,6 +121,9 @@ class GPTLiveHandler(ConversationHandler):
         self._last_server_reason: str | None = None
         self._session_started_at: datetime | None = None
         self._budget_warning_logged = False
+        self._pending_announcements: list[str] = []
+        self._background_task_factories = background_tasks if background_tasks is not None else []
+        self._background_tasks: list[asyncio.Task[None]] = []
 
     def _is_connected(self) -> bool:
         """Return whether a Live connection is active."""
@@ -127,6 +131,11 @@ class GPTLiveHandler(ConversationHandler):
 
     async def start_up(self) -> None:
         """Run the wake-gated session supervisor until shutdown."""
+        if not self._background_tasks:
+            self._background_tasks = [
+                asyncio.create_task(self._run_background_task(factory), name=f"ambient-background-{index}")
+                for index, factory in enumerate(self._background_task_factories)
+            ]
         while not self._shutdown_event.is_set():
             await self._wake_event.wait()
             self._wake_event.clear()
@@ -160,7 +169,15 @@ class GPTLiveHandler(ConversationHandler):
             self._assistant_transcript_task.cancel()
         if self._speaking_task is not None:
             self._speaking_task.cancel()
+        for task in self._background_tasks:
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
         await self.tool_manager.shutdown()
+
+    async def _run_background_task(self, factory: Callable[[], Awaitable[None]]) -> None:
+        await factory()
 
     async def receive(self, frame: tuple[int, NDArray[np.int16]]) -> None:
         """Receive a local audio frame in either asleep or Live state."""
@@ -245,6 +262,10 @@ class GPTLiveHandler(ConversationHandler):
             greeting = get_session_greeting_prompt().strip()
             if greeting:
                 await connection.session.commentary.append(content=greeting, delegation_id=None)
+            if self._pending_announcements:
+                announcements = "While you were away: " + " ".join(self._pending_announcements)
+                self._pending_announcements.clear()
+                await connection.session.commentary.append(content=announcements, delegation_id=None)
             close_watch = asyncio.create_task(self._gate_watch())
             try:
                 event_stream = connection.__aiter__()
@@ -371,6 +392,19 @@ class GPTLiveHandler(ConversationHandler):
             raise RuntimeError("say: no active session")
         await self.connection.session.commentary.append(content=text, delegation_id=None)
         self._mark_activity("say")
+
+    async def announce(self, text: str) -> None:
+        """Speak an announcement now or queue it for the next wake."""
+        if not text.strip():
+            return
+        if self.connection is not None:
+            await self.say(text)
+        else:
+            self._pending_announcements.append(text.strip())
+
+    async def request_stop(self) -> None:
+        """Request that the current Live session stop."""
+        self.gate.request_close(CloseReason.USER_DISMISSED)
 
     async def apply_personality(self, profile: str | None) -> str:
         """Apply a profile for the next session."""
