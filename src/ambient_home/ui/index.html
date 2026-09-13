@@ -9,10 +9,14 @@
     header { align-items: center; display: flex; gap: 1rem; justify-content: space-between; }
     .badge { border-radius: 999px; color: white; padding: .25rem .75rem; }
     .asleep { background: #555; } .live { background: #198754; }
-    button { cursor: pointer; } table { border-collapse: collapse; margin-top: 1rem; width: 100%; }
+    button { cursor: pointer; } table { border-collapse: collapse; table-layout: fixed; margin-top: 1rem; width: 100%; }
     td, th { border-bottom: 1px solid #ddd; padding: .6rem; text-align: left; vertical-align: top; }
+    th:nth-child(1), td.request { max-width: 40ch; overflow-wrap: anywhere; word-break: break-word; width: 40%; }
+    th:nth-child(2), td.status { width: 12%; }
+    th:nth-child(3), td.pr { width: 14%; }
+    th:nth-child(4), td.question { width: 34%; }
     .danger { background: #b42318; border: 0; color: white; padding: .5rem .75rem; }
-    input { max-width: 18rem; padding: .4rem; }
+    input { max-width: 18rem; padding: .4rem; width: calc(100% - 5rem); }
   </style>
 </head>
 <body>
@@ -36,12 +40,53 @@
     }
     async function answer(id) {
       const input = document.getElementById("answer-" + id);
+      const answerText = input.value.trim();
+      if (!answerText) {
+        return;
+      }
+      const send = document.getElementById("send-" + id);
+      send.disabled = true;
       await fetch("/api/jobs/" + encodeURIComponent(id) + "/answer", {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({answer: input.value})
+        body: JSON.stringify({answer: answerText})
       });
       input.value = "";
       await refresh();
+    }
+    function createJobRow(job) {
+      const row = document.createElement("tr");
+      row.dataset.jobId = job.id;
+      row.innerHTML =
+        '<td class="request"></td><td class="status"></td><td class="pr"></td>' +
+        '<td class="question"><span class="question-text"></span>' +
+        '<div class="answer-controls"><input id="answer-' + job.id +
+        '" placeholder="Answer"><button id="send-' + job.id + '">Send</button></div></td>';
+      const input = row.querySelector("input");
+      const send = row.querySelector("button");
+      input.addEventListener("input", () => {
+        send.disabled = !input.value.trim();
+      });
+      send.addEventListener("click", () => answer(job.id));
+      return row;
+    }
+    function updateJobRow(row, job) {
+      row.querySelector(".request").textContent = job.request;
+      row.querySelector(".status").textContent = job.status;
+      const pr = row.querySelector(".pr");
+      pr.replaceChildren();
+      if (job.pr_url) {
+        const link = document.createElement("a");
+        link.href = job.pr_url;
+        link.target = "_blank";
+        link.textContent = "PR";
+        pr.appendChild(link);
+      }
+      row.querySelector(".question-text").textContent = job.question || "";
+      const controls = row.querySelector(".answer-controls");
+      controls.hidden = job.status !== "blocked";
+      const input = row.querySelector("input");
+      const send = row.querySelector("button");
+      send.disabled = !input.value.trim();
     }
     async function refresh() {
       const response = await fetch("/api/status");
@@ -54,14 +99,23 @@
         "Session: " + Math.round(live.session_elapsed_s) + "s · Today: " +
         (live.seconds_used_today / 60).toFixed(1) + " used · " +
         (live.seconds_remaining_today / 60).toFixed(1) + " remaining minutes";
-      document.getElementById("jobs").innerHTML = data.jobs.map(job => {
-        const question = job.question || "";
-        const answerBox = question ? '<br><input id="answer-' + job.id + '" placeholder="Answer"><button onclick="answer(\'' +
-          job.id + '\')">Send</button>' : "";
-        const pr = job.pr_url ? '<a href="' + job.pr_url + '" target="_blank">PR</a>' : "";
-        return "<tr><td>" + job.request + "</td><td>" + job.status + "</td><td>" + pr +
-          "</td><td>" + question + answerBox + "</td></tr>";
-      }).join("");
+      const jobs = document.getElementById("jobs");
+      const existingRows = Array.from(jobs.querySelectorAll("tr"));
+      const seen = new Set();
+      data.jobs.forEach(job => {
+        let row = existingRows.find(candidate => candidate.dataset.jobId === job.id);
+        if (!row) {
+          row = createJobRow(job);
+        }
+        updateJobRow(row, job);
+        jobs.appendChild(row);
+        seen.add(job.id);
+      });
+      existingRows.forEach(row => {
+        if (!seen.has(row.dataset.jobId)) {
+          row.remove();
+        }
+      });
     }
     refresh();
     setInterval(refresh, 2000);

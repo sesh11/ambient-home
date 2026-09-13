@@ -5,7 +5,7 @@ from collections.abc import Callable, Awaitable
 
 from fastapi import FastAPI
 from pydantic import BaseModel
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from ambient_home.jobs.service import JobService
 from ambient_home.live_handler import LiveStatus
@@ -47,11 +47,14 @@ def create_app(
         await stop_callback()
         return {"ok": True}
 
-    @app.post("/api/jobs/{job_id}/answer")
-    async def answer(job_id: str, request: _AnswerRequest) -> dict[str, object]:
-        job = await job_service.answer(job_id, request.answer)
+    @app.post("/api/jobs/{job_id}/answer", response_model=None)
+    async def answer(job_id: str, request: _AnswerRequest) -> dict[str, object] | JSONResponse:
+        answer_text = request.answer.strip()
+        if not answer_text:
+            return JSONResponse(status_code=400, content={"error": "answer is required"})
+        job = await job_service.answer(job_id, answer_text)
         if job is None:
-            return {"error": "unknown job"}
+            return JSONResponse(status_code=404, content={"error": "unknown job"})
         return {"job_id": job.id, "status": job.status.value}
 
     return app
