@@ -31,8 +31,6 @@ class _SessionMessage(BaseModel):
 
     message: str
     source: str
-    created_at: str | None = None
-    event_id: str | None = None
 
 
 class _MessagesResponse(BaseModel):
