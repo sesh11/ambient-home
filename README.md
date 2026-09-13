@@ -38,6 +38,9 @@ reachy-mini-daemon --sim
 uv run ambient-home
 ```
 
+On first hardware setup, run `uv run ambient-mic-check` before starting the
+assistant to verify that the microphone is producing audio.
+
 ## Environment
 
 | Variable | Default | Purpose |
@@ -85,3 +88,29 @@ also pending hardware verification.
 Hardware verification still needed: microphone/speaker behavior, AEC,
 barge-in flushing, direction of arrival, a real OpenAI Live session, and a
 real Devin dispatch.
+
+### Microphone returns silence
+
+If the asleep heartbeat reports `mic_rms=0`, the Reachy Mini Lite/macOS XMOS
+microphone may be returning all-zero frames. With the daemon running, first
+check the microphone:
+
+```bash
+uv run ambient-mic-check
+```
+
+If it reports silence, stop `reachy-mini-daemon`, reboot the XMOS device, and
+run the check again:
+
+```bash
+uv run ambient-mic-check --reboot-xmos
+```
+
+This is the known
+[Reachy Mini XMOS startup issue](https://github.com/pollen-robotics/reachy_mini/issues/770).
+On macOS, the daemon may need an explicit serial port:
+
+```bash
+ls /dev/cu.usbmodem*
+reachy-mini-daemon --serialport /dev/cu.usbmodem…
+```
