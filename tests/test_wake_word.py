@@ -1,5 +1,7 @@
 """Wake-word detector tests."""
 
+from pathlib import Path
+
 import numpy as np
 
 from ambient_home.wake_word import OpenWakeWordDetector, resolve_model_path
@@ -29,5 +31,6 @@ def test_detector_chunks_and_suppresses_retrigger(monkeypatch) -> None:
 
 
 def test_resolves_bundled_model_path() -> None:
-    resolved = resolve_model_path("hey_alfred")
-    assert resolved.endswith("/ambient_home/models/hey_alfred.onnx")
+    resolved = Path(resolve_model_path("hey_alfred"))
+    assert resolved.is_file()
+    assert resolved.parts[-3:] == ("ambient_home", "models", "hey_alfred.onnx")
