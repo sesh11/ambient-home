@@ -198,9 +198,9 @@ class GPTLiveHandler(ConversationHandler):
             self._saw_nonzero_audio = True
         if self._received_audio_seconds >= 5.0 and not self._saw_nonzero_audio and not self._silence_error_logged:
             logger.error(
-                "Microphone has delivered only zeros for 5 s. Known Reachy Mini Lite/macOS XMOS startup fault "
-                "(pollen-robotics/reachy_mini#770). Stop reachy-mini-daemon, run "
-                "`uv run ambient-mic-check --reboot-xmos`, then restart both."
+                "Microphone has delivered only zeros for 5 s. Known Reachy Mini Lite XMOS startup fault "
+                "(pollen-robotics/reachy_mini#770). Run `uv run ambient-mic-check --reboot-xmos`, then "
+                "restart ambient-home; if still silent, check the microphone FPC cable."
             )
             self._silence_error_logged = True
         if not self._is_connected():

@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from ambient_home.ui import create_app
 from ambient_home.config import settings_from_env
 from ambient_home.runtime import set_settings, set_job_service
+from ambient_home.mic_check import ensure_microphone_audio
 from ambient_home.spend_log import SpendLog
 from ambient_home.wake_word import OpenWakeWordDetector
 from ambient_home.jobs.board import JobBoard
@@ -74,6 +75,8 @@ def main() -> None:
         seconds_used_today=spend_log.seconds_today(datetime.now().astimezone()),
     )
     wake_detector = OpenWakeWordDetector(settings.wake_word, settings.wake_threshold)
+    if settings.mic_autorecover:
+        ensure_microphone_audio()
     robot = ReachyMini()
     movement_manager = MovementManager(current_robot=robot)
 
