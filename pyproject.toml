@@ -44,7 +44,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-ambient_home = ["profiles/**/*.md", "ui/index.html"]
+ambient_home = ["models/*.onnx", "profiles/**/*.md", "ui/index.html"]
 
 [tool.ruff]
 line-length = 119
