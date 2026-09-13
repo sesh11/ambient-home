@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+reachy_mini_env
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables
+.env
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing
+.pytest_cache/
+.coverage
+.hypothesis/
+htmlcov/
+coverage.xml
+*.cover
+
+# Linting and formatting
+.ruff_cache/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AI tooling
+.claude/
+
+# Security
+*.key
+*.pem
+*.crt
+*.csr
+
+# Temporary files
+tmp/
+*.log
+cache/
+
+# macOS
+.DS_Store
+
+# Linux
+*~
+.directory
+.Trash-*
+.nfs*
+
+# Terminal-mode runtime content
+external_content/external_profiles/*
+!external_content/external_profiles/starter_profile/
+external_content/external_profiles/starter_profile/*
+!external_content/external_profiles/starter_profile/profile.md
+external_content/external_tools/*
+!external_content/external_tools/starter_custom_tool.py
+external_content/user_personalities/
+external_content/installed_tool_spaces.json
+external_content/profile_toolsets.json
