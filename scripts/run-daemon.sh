@@ -45,4 +45,9 @@ done
 
 wait "$daemon_pid" && status=0 || status=$?
 echo "run-daemon: reachy-mini-daemon exited with status $status" >&2
+# A clean daemon exit is still unexpected for a supervised service; return
+# non-zero so launchd's KeepAlive (SuccessfulExit=false) restarts it.
+if [ "$status" -eq 0 ]; then
+    exit 75
+fi
 exit "$status"

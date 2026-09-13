@@ -9,6 +9,7 @@ import platform
 import subprocess
 from pathlib import Path
 from dataclasses import dataclass
+from xml.sax.saxutils import escape
 from importlib.resources import files
 
 
@@ -80,7 +81,10 @@ def find_uv() -> Path:
 
 def _resolve_uv(uv_bin: Path | None, require_uv: bool) -> Path:
     if uv_bin is not None:
-        return uv_bin.expanduser().resolve()
+        resolved = uv_bin.expanduser().resolve()
+        if require_uv and not resolved.is_file():
+            raise FileNotFoundError(f"uv not found at {resolved}")
+        return resolved
     try:
         return find_uv()
     except FileNotFoundError:
@@ -114,7 +118,8 @@ def resolve_paths(
 def render_plist(label: str, paths: ServicePaths) -> str:
     """Render the LaunchAgent plist for ``label`` from the bundled template."""
     template = files("ambient_home").joinpath("launchd", f"{label}.plist").read_text(encoding="utf-8")
-    return string.Template(template).substitute(paths.substitutions())
+    escaped = {key: escape(value) for key, value in paths.substitutions().items()}
+    return string.Template(template).substitute(escaped)
 
 
 def launchctl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
