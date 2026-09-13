@@ -3,7 +3,6 @@
 import os
 import asyncio
 import logging
-from pathlib import Path
 from datetime import datetime
 from collections.abc import Callable, Awaitable
 
@@ -35,13 +34,10 @@ def main() -> None:
         level=log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    package_root = Path(__file__).parent
-    os.environ.setdefault("REACHY_MINI_EXTERNAL_PROFILES_DIRECTORY", str(package_root / "profiles"))
-    os.environ.setdefault("REACHY_MINI_CUSTOM_PROFILE", "alfred")
-    os.environ.setdefault("REACHY_MINI_EXTERNAL_TOOLS_DIRECTORY", str(package_root / "reachy_tools"))
 
     from reachy_mini import ReachyMini
     from reachy_mini_conversation_app.moves import MovementManager
+    from reachy_mini_conversation_app.config import config as reachy_config
     from reachy_mini_conversation_app.console import LocalStream
     from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, initialize_tools
 
@@ -138,11 +134,13 @@ def main() -> None:
         ]
     )
     logger.info(
-        "Starting ambient-home model=%s backend=%s voice=%s wake=%s daily_budget_s=%s",
+        "Starting ambient-home model=%s backend=%s voice=%s wake=%s profile=%s profiles_dir=%s daily_budget_s=%s",
         settings.live_model,
         settings.backend_model,
         settings.voice,
         settings.wake_word,
+        reachy_config.REACHY_MINI_CUSTOM_PROFILE,
+        reachy_config.PROFILES_DIRECTORY,
         settings.daily_budget_s,
     )
     asyncio.run(handler.prepare_asleep())
