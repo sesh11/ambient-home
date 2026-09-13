@@ -3,11 +3,15 @@
 from fastapi.testclient import TestClient
 
 from ambient_home.ui import create_app
-from ambient_home.jobs.board import JobBoard
+from ambient_home.jobs.board import Job, JobBoard
 from ambient_home.jobs.devin import NullWorker
 from ambient_home.jobs.service import JobService
 from ambient_home.live_handler import LiveStatus
 from ambient_home.session_gate import GateState
+
+
+async def noop_stop() -> None:
+    return
 
 
 def test_status_shape_and_stop_route(tmp_path) -> None:
@@ -31,3 +35,34 @@ def test_status_shape_and_stop_route(tmp_path) -> None:
         assert client.post("/api/stop").json() == {"ok": True}
 
     assert stopped
+
+
+def test_answer_rejects_empty_input_without_calling_service(tmp_path, monkeypatch) -> None:
+    service = JobService(JobBoard(tmp_path / "jobs.json"), NullWorker(), lambda text: noop_stop())
+    called = False
+
+    async def answer(job_id: str, answer_text: str) -> Job | None:
+        nonlocal called
+        called = True
+        return None
+
+    monkeypatch.setattr(service, "answer", answer)
+    app = create_app(lambda: LiveStatus(GateState.ASLEEP, 0.0, 0.0, 0.0, None), service, noop_stop)
+
+    with TestClient(app) as client:
+        response = client.post("/api/jobs/missing/answer", json={"answer": " \t\n"})
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "answer is required"}
+    assert not called
+
+
+def test_answer_unknown_job_returns_not_found(tmp_path) -> None:
+    service = JobService(JobBoard(tmp_path / "jobs.json"), NullWorker(), lambda text: noop_stop())
+    app = create_app(lambda: LiveStatus(GateState.ASLEEP, 0.0, 0.0, 0.0, None), service, noop_stop)
+
+    with TestClient(app) as client:
+        response = client.post("/api/jobs/missing/answer", json={"answer": "No"})
+
+    assert response.status_code == 404
+    assert response.json() == {"error": "unknown job"}
