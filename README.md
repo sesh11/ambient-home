@@ -65,10 +65,9 @@ same probe standalone.
 | `DEVIN_ORG_ID` | unset | Devin organization ID (`org-…`, from app.devin.ai → Settings → Organization); required together with a `cog_` service-user API key |
 | `DEVIN_API_BASE_URL` | `https://api.devin.ai` | Devin API base URL |
 | `AMBIENT_DEVIN_MAX_ACU` | `5` | Maximum ACU per Devin session |
-| `AMBIENT_MONTHLY_ACU_CAP` | `100` | Monthly worker ACU cap; dispatch is refused at the cap |
 | `AMBIENT_LIVE_USD_PER_MINUTE` | `0.3` | Dollar estimate per Live audio minute |
 | `AMBIENT_ACU_USD` | `2.25` | Dollar estimate per worker ACU |
-| `AMBIENT_COST_HISTORY_DAYS` | `7` | Days of cost history shown in the UI |
+| `AMBIENT_COST_HISTORY_DAYS` | `7` | Days of usage history charted in the UI |
 | `AMBIENT_JOB_POLL_S` | `20` | Job refresh interval |
 | `AMBIENT_UI_HOST` | `127.0.0.1` | Local status UI bind address |
 | `AMBIENT_UI_PORT` | `8765` | Local status UI port |
@@ -89,15 +88,11 @@ job through an API is not implemented in this MVP.
 
 ## Costs
 
-The dashboard tracks two caps: Live audio minutes today against
-`AMBIENT_DAILY_BUDGET_S` and worker ACUs this month against
-`AMBIENT_MONTHLY_ACU_CAP`. Each shows usage, remaining capacity, and a dollar
-estimate from the configured rates, alongside a seven-day history of minutes
-and ACUs. Crossing 80% or 100% of a cap is announced once per day (Live) or
-month (ACUs) and shown as a banner. At the monthly ACU cap new dispatches are
-refused with a spoken reason; Live already sleeps at its daily cap. Ask “what
-have we spent today?” for the same numbers by voice. Rates are local
-estimates only — no usage data leaves the machine.
+The dashboard charts daily usage over the last `AMBIENT_COST_HISTORY_DAYS`
+days: Live audio minutes and worker ACUs per day, with dollar estimates from
+`AMBIENT_LIVE_USD_PER_MINUTE` and `AMBIENT_ACU_USD`, plus today's totals and
+the window total. Ask “what have we spent today?” for the same numbers by
+voice. Rates are local estimates only — no usage data leaves the machine.
 
 ## Not yet
 

@@ -10,7 +10,7 @@ import uvicorn
 from dotenv import load_dotenv
 
 from ambient_home.ui import create_app
-from ambient_home.costs import CostCaps, CostRates, CostTracker
+from ambient_home.costs import CostRates, CostTracker
 from ambient_home.config import settings_from_env
 from ambient_home.runtime import set_settings, set_job_service, set_cost_tracker
 from ambient_home.mic_check import ensure_microphone_audio
@@ -87,17 +87,11 @@ def main() -> None:
             live_usd_per_minute=settings.live_usd_per_minute,
             acu_usd=settings.acu_usd,
         ),
-        caps=CostCaps(live_daily_s=settings.daily_budget_s, acu_monthly=settings.monthly_acu_cap),
         history_days=settings.cost_history_days,
         live_session_seconds=lambda: gate.session_elapsed_s,
     )
     set_cost_tracker(cost_tracker)
-    job_service = JobService(
-        board,
-        worker,
-        announce,
-        dispatch_guard=lambda: cost_tracker.dispatch_refusal(datetime.now().astimezone()),
-    )
+    job_service = JobService(board, worker, announce)
     set_job_service(job_service)
     wake_detector = OpenWakeWordDetector(settings.wake_word, settings.wake_threshold)
     if settings.mic_autorecover:
@@ -159,7 +153,6 @@ def main() -> None:
     background_factories.extend(
         [
             lambda: job_service.run_poller(settings.job_poll_s),
-            lambda: cost_tracker.run_alert_poller(settings.job_poll_s, announce),
             run_ui,
         ]
     )

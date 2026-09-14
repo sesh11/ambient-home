@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 
 from ambient_home.ui import create_app
-from ambient_home.costs import CostCaps, CostRates, CostTracker
+from ambient_home.costs import CostRates, CostTracker
 from ambient_home.spend_log import SpendLog
 from ambient_home.jobs.board import Job, JobBoard
 from ambient_home.jobs.devin import NullWorker
@@ -21,7 +21,6 @@ def build_tracker(board: JobBoard, tmp_path) -> CostTracker:
         SpendLog(tmp_path / "spend.jsonl"),
         board,
         rates=CostRates(live_usd_per_minute=0.3, acu_usd=2.0),
-        caps=CostCaps(live_daily_s=600.0, acu_monthly=10.0),
     )
 
 
@@ -50,7 +49,7 @@ def test_status_shape_and_stop_route(tmp_path) -> None:
     assert stopped
 
 
-def test_costs_route_reports_caps_and_history(tmp_path) -> None:
+def test_costs_route_reports_today_and_history(tmp_path) -> None:
     board = JobBoard(tmp_path / "jobs.json")
     board.add(Job(request="job", acus_consumed=9.0))
     service = JobService(board, NullWorker(), lambda text: noop_stop())
@@ -64,10 +63,9 @@ def test_costs_route_reports_caps_and_history(tmp_path) -> None:
     with TestClient(app) as client:
         payload = client.get("/api/costs").json()
 
-    caps = {item["kind"]: item for item in payload["caps"]}
-    assert caps["acu_monthly"]["used"] == 9.0
-    assert caps["acu_monthly"]["usd"] == 18.0
-    assert payload["alerts"] == ["Worker ACUs this month is at 90% of its cap of 10 ACU."]
+    assert payload["today"]["acus"] == 9.0
+    assert payload["today"]["usd"] == 18.0
+    assert payload["window_usd"] == 18.0
     assert len(payload["history"]) == 7
 
 

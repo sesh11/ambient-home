@@ -18,13 +18,6 @@
     th:nth-child(5), td.question { width: 28%; }
     .danger { background: #b42318; border: 0; color: white; padding: .5rem .75rem; }
     input { max-width: 18rem; padding: .4rem; width: calc(100% - 5rem); }
-    #banner { background: #fff4e5; border-left: 4px solid #b54708; display: none; margin-top: 1rem; padding: .75rem; }
-    #banner.over { background: #fef3f2; border-left-color: #b42318; }
-    .cap { margin-top: .75rem; }
-    .cap-label { display: flex; font-size: .9rem; justify-content: space-between; }
-    .meter { background: #eee; border-radius: 999px; height: .6rem; margin-top: .25rem; overflow: hidden; }
-    .meter > span { background: #198754; display: block; height: 100%; }
-    .meter.warn > span { background: #b54708; } .meter.over > span { background: #b42318; }
     .history { align-items: flex-end; display: flex; gap: .5rem; height: 6rem; margin-top: 1rem; }
     .history > div { display: flex; flex: 1; flex-direction: column; height: 100%; justify-content: flex-end; text-align: center; }
     .history .bar { background: #198754; border-radius: 2px 2px 0 0; min-height: 1px; }
@@ -44,10 +37,8 @@
     </div>
   </header>
   <p id="usage">Session: 0s · Today: 0.0 / 0.0 minutes</p>
-  <div id="banner"></div>
-  <h2>Cost</h2>
+  <h2>Daily usage</h2>
   <p id="cost-total"></p>
-  <div id="caps"></div>
   <div class="history" id="history"></div>
   <p class="legend"><span class="swatch live"></span> Live audio $ · <span class="swatch acu"></span> worker ACU $ · estimates from local rates</p>
   <h2>Jobs</h2>
@@ -112,26 +103,6 @@
       const send = row.querySelector("button");
       send.disabled = !input.value.trim();
     }
-    function renderCaps(caps) {
-      const container = document.getElementById("caps");
-      container.replaceChildren();
-      caps.forEach(cap => {
-        const level = cap.fraction >= 1 ? "over" : cap.fraction >= 0.8 ? "warn" : "";
-        const block = document.createElement("div");
-        block.className = "cap";
-        block.innerHTML =
-          '<div class="cap-label"><span></span><span></span></div>' +
-          '<div class="meter"><span></span></div>';
-        const labels = block.querySelectorAll(".cap-label span");
-        labels[0].textContent = cap.label;
-        labels[1].textContent = cap.used.toFixed(1) + " / " + cap.cap.toFixed(0) + " " + cap.unit +
-          " · $" + cap.usd.toFixed(2);
-        const meter = block.querySelector(".meter");
-        meter.className = "meter " + level;
-        meter.firstElementChild.style.width = Math.min(100, cap.fraction * 100).toFixed(1) + "%";
-        container.appendChild(block);
-      });
-    }
     function renderHistory(history) {
       const container = document.getElementById("history");
       container.replaceChildren();
@@ -154,14 +125,12 @@
       });
     }
     function renderCosts(costs) {
+      const today = costs.today;
       document.getElementById("cost-total").textContent =
-        "Today: $" + costs.today_usd.toFixed(2) + " · This month's ACUs: $" + costs.month_usd.toFixed(2);
-      renderCaps(costs.caps);
+        "Today: " + today.live_minutes.toFixed(1) + " Live minutes, " + today.acus.toFixed(2) +
+        " ACUs · $" + today.usd.toFixed(2) + " · last " + costs.history.length + " days: $" +
+        costs.window_usd.toFixed(2);
       renderHistory(costs.history);
-      const banner = document.getElementById("banner");
-      banner.textContent = costs.alerts.join(" ");
-      banner.style.display = costs.alerts.length ? "block" : "none";
-      banner.className = costs.caps.some(cap => cap.fraction >= 1) ? "over" : "";
     }
     async function refresh() {
       const costResponse = await fetch("/api/costs");
