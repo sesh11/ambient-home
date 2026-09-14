@@ -13,10 +13,19 @@
     td, th { border-bottom: 1px solid #ddd; padding: .6rem; text-align: left; vertical-align: top; }
     th:nth-child(1), td.request { max-width: 40ch; overflow-wrap: anywhere; word-break: break-word; width: 40%; }
     th:nth-child(2), td.status { width: 12%; }
-    th:nth-child(3), td.pr { width: 14%; }
-    th:nth-child(4), td.question { width: 34%; }
+    th:nth-child(3), td.acu { width: 8%; }
+    th:nth-child(4), td.pr { width: 12%; }
+    th:nth-child(5), td.question { width: 28%; }
     .danger { background: #b42318; border: 0; color: white; padding: .5rem .75rem; }
     input { max-width: 18rem; padding: .4rem; width: calc(100% - 5rem); }
+    .history { align-items: flex-end; display: flex; gap: .5rem; height: 6rem; margin-top: 1rem; }
+    .history > div { display: flex; flex: 1; flex-direction: column; height: 100%; justify-content: flex-end; text-align: center; }
+    .history .bar { background: #198754; border-radius: 2px 2px 0 0; min-height: 1px; }
+    .history .bar.acu { background: #3b82f6; }
+    .history .day { color: #666; font-size: .7rem; padding-top: .25rem; }
+    .legend { color: #666; font-size: .8rem; }
+    .swatch { border-radius: 2px; display: inline-block; height: .6rem; width: .6rem; }
+    .swatch.live { background: #198754; } .swatch.acu { background: #3b82f6; }
   </style>
 </head>
 <body>
@@ -28,9 +37,13 @@
     </div>
   </header>
   <p id="usage">Session: 0s · Today: 0.0 / 0.0 minutes</p>
+  <h2>Daily usage</h2>
+  <p id="cost-total"></p>
+  <div class="history" id="history"></div>
+  <p class="legend"><span class="swatch live"></span> Live audio $ · <span class="swatch acu"></span> worker ACU $ · estimates from local rates</p>
   <h2>Jobs</h2>
   <table>
-    <thead><tr><th>Request</th><th>Status</th><th>PR</th><th>Question</th></tr></thead>
+    <thead><tr><th>Request</th><th>Status</th><th>ACU</th><th>PR</th><th>Question</th></tr></thead>
     <tbody id="jobs"></tbody>
   </table>
   <script>
@@ -57,7 +70,7 @@
       const row = document.createElement("tr");
       row.dataset.jobId = job.id;
       row.innerHTML =
-        '<td class="request"></td><td class="status"></td><td class="pr"></td>' +
+        '<td class="request"></td><td class="status"></td><td class="acu"></td><td class="pr"></td>' +
         '<td class="question"><span class="question-text"></span>' +
         '<div class="answer-controls"><input id="answer-' + job.id +
         '" placeholder="Answer"><button id="send-' + job.id + '">Send</button></div></td>';
@@ -72,6 +85,8 @@
     function updateJobRow(row, job) {
       row.querySelector(".request").textContent = job.request;
       row.querySelector(".status").textContent = job.status;
+      row.querySelector(".acu").textContent =
+        job.acus_consumed === null || job.acus_consumed === undefined ? "" : job.acus_consumed.toFixed(2);
       const pr = row.querySelector(".pr");
       pr.replaceChildren();
       if (job.pr_url) {
@@ -81,14 +96,45 @@
         link.textContent = "PR";
         pr.appendChild(link);
       }
-      row.querySelector(".question-text").textContent = job.question || "";
+      row.querySelector(".question-text").textContent = job.question || job.error || "";
       const controls = row.querySelector(".answer-controls");
       controls.hidden = job.status !== "blocked";
       const input = row.querySelector("input");
       const send = row.querySelector("button");
       send.disabled = !input.value.trim();
     }
+    function renderHistory(history) {
+      const container = document.getElementById("history");
+      container.replaceChildren();
+      const peak = Math.max(0.01, ...history.map(day => day.usd));
+      history.forEach(day => {
+        const column = document.createElement("div");
+        column.title = day.date + ": $" + day.usd.toFixed(2) + " (" + day.live_minutes.toFixed(1) +
+          " min, " + day.acus.toFixed(2) + " ACU)";
+        const acu = document.createElement("div");
+        acu.className = "bar acu";
+        acu.style.height = (day.acu_usd / peak * 100).toFixed(1) + "%";
+        const live = document.createElement("div");
+        live.className = "bar";
+        live.style.height = (day.live_usd / peak * 100).toFixed(1) + "%";
+        const label = document.createElement("div");
+        label.className = "day";
+        label.textContent = day.date.slice(5);
+        column.append(acu, live, label);
+        container.appendChild(column);
+      });
+    }
+    function renderCosts(costs) {
+      const today = costs.today;
+      document.getElementById("cost-total").textContent =
+        "Today: " + today.live_minutes.toFixed(1) + " Live minutes, " + today.acus.toFixed(2) +
+        " ACUs · $" + today.usd.toFixed(2) + " · last " + costs.history.length + " days: $" +
+        costs.window_usd.toFixed(2);
+      renderHistory(costs.history);
+    }
     async function refresh() {
+      const costResponse = await fetch("/api/costs");
+      renderCosts(await costResponse.json());
       const response = await fetch("/api/status");
       const data = await response.json();
       const live = data.live;

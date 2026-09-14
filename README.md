@@ -65,6 +65,9 @@ same probe standalone.
 | `DEVIN_ORG_ID` | unset | Devin organization ID (`org-…`, from app.devin.ai → Settings → Organization); required together with a `cog_` service-user API key |
 | `DEVIN_API_BASE_URL` | `https://api.devin.ai` | Devin API base URL |
 | `AMBIENT_DEVIN_MAX_ACU` | `5` | Maximum ACU per Devin session |
+| `AMBIENT_LIVE_USD_PER_MINUTE` | `0.3` | Dollar estimate per Live audio minute |
+| `AMBIENT_ACU_USD` | `2.25` | Dollar estimate per worker ACU |
+| `AMBIENT_COST_HISTORY_DAYS` | `7` | Days of usage history charted in the UI |
 | `AMBIENT_JOB_POLL_S` | `20` | Job refresh interval |
 | `AMBIENT_UI_HOST` | `127.0.0.1` | Local status UI bind address |
 | `AMBIENT_UI_PORT` | `8765` | Local status UI port |
@@ -82,6 +85,14 @@ default. Blocked jobs can be answered by voice with `answer_job` or in the UI.
 With the app running, open <http://127.0.0.1:8765/> for live state, daily
 usage, job status, pull-request links, and a stop-session button. Cancelling a
 job through an API is not implemented in this MVP.
+
+## Costs
+
+The dashboard charts daily usage over the last `AMBIENT_COST_HISTORY_DAYS`
+days: Live audio minutes and worker ACUs per day, with dollar estimates from
+`AMBIENT_LIVE_USD_PER_MINUTE` and `AMBIENT_ACU_USD`, plus today's totals and
+the window total. Ask “what have we spent today?” for the same numbers by
+voice. Rates are local estimates only — no usage data leaves the machine.
 
 ## Not yet
 

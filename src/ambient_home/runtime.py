@@ -1,11 +1,13 @@
 """Process-local runtime settings bridge for external tools."""
 
+from ambient_home.costs import CostTracker
 from ambient_home.config import AmbientSettings
 from ambient_home.jobs.service import JobService
 
 
 _settings: AmbientSettings | None = None
 _job_service: JobService | None = None
+_cost_tracker: CostTracker | None = None
 
 
 def set_settings(settings: AmbientSettings) -> None:
@@ -32,3 +34,16 @@ def get_job_service() -> JobService:
     if _job_service is None:
         raise RuntimeError("ambient-home job service has not been initialized")
     return _job_service
+
+
+def set_cost_tracker(tracker: CostTracker) -> None:
+    """Set the cost tracker used by external tools and the local UI."""
+    global _cost_tracker
+    _cost_tracker = tracker
+
+
+def get_cost_tracker() -> CostTracker:
+    """Return the configured cost tracker."""
+    if _cost_tracker is None:
+        raise RuntimeError("ambient-home cost tracker has not been initialized")
+    return _cost_tracker
