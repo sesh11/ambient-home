@@ -68,8 +68,12 @@
   <script>
     const PAGES = ["jobs", "costs"];
     function currentPage() {
-      const name = (location.hash.replace("#/", "") || "").trim();
-      return PAGES.includes(name) ? name : "jobs";
+      const hash = location.hash.replace("#/", "").trim();
+      if (PAGES.includes(hash)) {
+        return hash;
+      }
+      const path = location.pathname.replace(/^\/|\/$/g, "");
+      return PAGES.includes(path) ? path : "jobs";
     }
     function renderNav() {
       const page = currentPage();
@@ -142,48 +146,64 @@
         "Total: $" + day.usd.toFixed(2)
       ].join("\n");
     }
-    function showTooltip(column, day) {
+    let activeColumn = null;
+    function showTooltip(column) {
       const tooltip = document.getElementById("tooltip");
       const chart = column.closest(".chart").getBoundingClientRect();
       const box = column.getBoundingClientRect();
-      tooltip.textContent = tooltipText(day);
+      tooltip.textContent = tooltipText(column.dayUsage);
       tooltip.style.whiteSpace = "pre";
       tooltip.style.display = "block";
-      tooltip.style.left = (box.left - chart.left + box.width / 2) + "px";
+      const half = tooltip.offsetWidth / 2;
+      const center = box.left - chart.left + box.width / 2;
+      tooltip.style.left = Math.min(Math.max(center, half), chart.width - half) + "px";
       tooltip.style.top = (box.top - chart.top - 8) + "px";
       column.classList.add("hover");
+      activeColumn = column;
     }
     function hideTooltip(column) {
-      document.getElementById("tooltip").style.display = "none";
-      if (column) {
-        column.classList.remove("hover");
+      if (column && column !== activeColumn) {
+        return;
       }
+      document.getElementById("tooltip").style.display = "none";
+      if (activeColumn) {
+        activeColumn.classList.remove("hover");
+      }
+      activeColumn = null;
+    }
+    function createColumn() {
+      const column = document.createElement("div");
+      column.tabIndex = 0;
+      column.innerHTML = '<div class="bar acu"></div><div class="bar"></div><div class="day"></div>';
+      column.addEventListener("mouseenter", () => showTooltip(column));
+      column.addEventListener("focus", () => showTooltip(column));
+      column.addEventListener("mouseleave", () => hideTooltip(column));
+      column.addEventListener("blur", () => hideTooltip(column));
+      return column;
+    }
+    function updateColumn(column, day, peak) {
+      column.dayUsage = day;
+      column.setAttribute("aria-label", tooltipText(day).replace(/\n/g, ", "));
+      column.querySelector(".bar.acu").style.height = (day.acu_usd / peak * 100).toFixed(1) + "%";
+      column.querySelector(".bar:not(.acu)").style.height =
+        (day.live_usd / peak * 100).toFixed(1) + "%";
+      column.querySelector(".day").textContent = day.date.slice(5);
     }
     function renderHistory(history) {
       const container = document.getElementById("history");
-      container.replaceChildren();
-      hideTooltip();
+      while (container.children.length > history.length) {
+        container.lastElementChild.remove();
+      }
+      while (container.children.length < history.length) {
+        container.appendChild(createColumn());
+      }
       const peak = Math.max(0.01, ...history.map(day => day.usd));
-      history.forEach(day => {
-        const column = document.createElement("div");
-        column.tabIndex = 0;
-        column.setAttribute("aria-label", tooltipText(day).replace(/\n/g, ", "));
-        const acu = document.createElement("div");
-        acu.className = "bar acu";
-        acu.style.height = (day.acu_usd / peak * 100).toFixed(1) + "%";
-        const live = document.createElement("div");
-        live.className = "bar";
-        live.style.height = (day.live_usd / peak * 100).toFixed(1) + "%";
-        const label = document.createElement("div");
-        label.className = "day";
-        label.textContent = day.date.slice(5);
-        column.append(acu, live, label);
-        column.addEventListener("mouseenter", () => showTooltip(column, day));
-        column.addEventListener("focus", () => showTooltip(column, day));
-        column.addEventListener("mouseleave", () => hideTooltip(column));
-        column.addEventListener("blur", () => hideTooltip(column));
-        container.appendChild(column);
-      });
+      history.forEach((day, index) => updateColumn(container.children[index], day, peak));
+      if (activeColumn && activeColumn.isConnected) {
+        showTooltip(activeColumn);
+      } else {
+        hideTooltip();
+      }
     }
     function renderCosts(costs) {
       const today = costs.today;
