@@ -49,6 +49,26 @@ def test_status_shape_and_stop_route(tmp_path) -> None:
     assert stopped
 
 
+def test_pages_serve_ui_and_root_redirects(tmp_path) -> None:
+    board = JobBoard(tmp_path / "jobs.json")
+    service = JobService(board, NullWorker(), lambda text: noop_stop())
+    app = create_app(
+        lambda: LiveStatus(GateState.ASLEEP, 0.0, 0.0, 0.0, None),
+        service,
+        noop_stop,
+        build_tracker(board, tmp_path),
+    )
+
+    with TestClient(app) as client:
+        root = client.get("/", follow_redirects=False)
+        assert root.status_code in {302, 307}
+        assert root.headers["location"] == "/jobs"
+        for path in ("/jobs", "/costs"):
+            page = client.get(path)
+            assert page.status_code == 200
+            assert 'href="#/costs"' in page.text
+
+
 def test_costs_route_reports_today_and_history(tmp_path) -> None:
     board = JobBoard(tmp_path / "jobs.json")
     board.add(Job(request="job", acus_consumed=9.0))

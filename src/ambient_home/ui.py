@@ -6,7 +6,7 @@ from collections.abc import Callable, Awaitable
 
 from fastapi import FastAPI
 from pydantic import BaseModel
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from ambient_home.costs import CostTracker
 from ambient_home.jobs.service import JobService
@@ -28,7 +28,15 @@ def create_app(
     index_path = Path(__file__).parent / "ui" / "index.html"
 
     @app.get("/")
-    async def index() -> FileResponse:
+    async def index() -> RedirectResponse:
+        return RedirectResponse("/jobs")
+
+    @app.get("/jobs")
+    async def jobs_page() -> FileResponse:
+        return FileResponse(index_path)
+
+    @app.get("/costs")
+    async def costs_page() -> FileResponse:
         return FileResponse(index_path)
 
     @app.get("/api/status")
