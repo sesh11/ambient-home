@@ -158,6 +158,9 @@
       const center = box.left - chart.left + box.width / 2;
       tooltip.style.left = Math.min(Math.max(center, half), chart.width - half) + "px";
       tooltip.style.top = (box.top - chart.top - 8) + "px";
+      if (activeColumn && activeColumn !== column) {
+        activeColumn.classList.remove("hover");
+      }
       column.classList.add("hover");
       activeColumn = column;
     }
