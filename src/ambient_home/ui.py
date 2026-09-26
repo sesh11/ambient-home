@@ -1,12 +1,14 @@
 """Small local status and control UI."""
 
 from pathlib import Path
+from datetime import datetime
 from collections.abc import Callable, Awaitable
 
 from fastapi import FastAPI
 from pydantic import BaseModel
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
+from ambient_home.costs import CostTracker
 from ambient_home.jobs.service import JobService
 from ambient_home.live_handler import LiveStatus
 
@@ -19,13 +21,22 @@ def create_app(
     status_provider: Callable[[], LiveStatus],
     job_service: JobService,
     stop_callback: Callable[[], Awaitable[None]],
+    cost_tracker: CostTracker,
 ) -> FastAPI:
     """Create the loopback-only status and control application."""
     app = FastAPI(title="ambient-home")
     index_path = Path(__file__).parent / "ui" / "index.html"
 
     @app.get("/")
-    async def index() -> FileResponse:
+    async def index() -> RedirectResponse:
+        return RedirectResponse("/jobs")
+
+    @app.get("/jobs")
+    async def jobs_page() -> FileResponse:
+        return FileResponse(index_path)
+
+    @app.get("/costs")
+    async def costs_page() -> FileResponse:
         return FileResponse(index_path)
 
     @app.get("/api/status")
@@ -41,6 +52,10 @@ def create_app(
             },
             "jobs": job_service.status_summary(),
         }
+
+    @app.get("/api/costs")
+    async def costs() -> dict[str, object]:
+        return cost_tracker.report(datetime.now().astimezone())
 
     @app.post("/api/stop")
     async def stop() -> dict[str, bool]:

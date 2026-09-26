@@ -49,6 +49,7 @@ class _SessionResponse(BaseModel):
     status_detail: str | None = None
     pull_requests: list[_PullRequest] = Field(default_factory=list)
     structured_output: dict[str, object] | None = None
+    acus_consumed: float | None = None
 
 
 def build_prompt(job: Job) -> str:
@@ -158,6 +159,8 @@ class DevinWorker:
             logger.warning("Could not refresh Devin job %s: %s", job.id, exc)
             return job
 
+        if session.acus_consumed is not None:
+            job.acus_consumed = session.acus_consumed
         status = session.status.lower()
         status_detail = (session.status_detail or "").lower()
         mapped_status = self._map_status(status, status_detail)

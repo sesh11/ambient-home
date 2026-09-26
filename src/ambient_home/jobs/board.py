@@ -50,6 +50,7 @@ class Job(BaseModel):
     worker_url: str | None = None
     pr_url: str | None = None
     summary: str | None = None
+    acus_consumed: float | None = None
     question: str | None = None
     error: str | None = None
     created_at: datetime = Field(default_factory=_utc_now)
@@ -110,6 +111,10 @@ class JobBoard:
         job.updated_at = _utc_now()
         self._jobs[job.id] = job
         self._write()
+
+    def all(self) -> list[Job]:
+        """Return every persisted job."""
+        return list(self._jobs.values())
 
     def open_jobs(self) -> list[Job]:
         """Return jobs that still need attention."""

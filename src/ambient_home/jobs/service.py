@@ -61,6 +61,8 @@ class JobService:
                 "request": job.request,
                 "pr_url": job.pr_url,
                 "question": job.question,
+                "error": job.error,
+                "acus_consumed": job.acus_consumed,
             }
             for job in self.board.recent()
         ]

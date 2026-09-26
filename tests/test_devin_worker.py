@@ -75,6 +75,27 @@ async def test_refresh_maps_running_working_without_fetching_messages() -> None:
 
 
 @pytest.mark.asyncio
+async def test_refresh_records_acus_consumed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "session_id": "session-1",
+                "status": "running",
+                "status_detail": "working",
+                "acus_consumed": 2.5,
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        worker = DevinWorker("secret", "org-test", http=client)
+        job = Job(request="Fix a bug", worker_session_id="session-1", status=JobStatus.working)
+        refreshed = await worker.refresh(job)
+
+    assert refreshed.acus_consumed == 2.5
+
+
+@pytest.mark.asyncio
 async def test_refresh_blocked_fetches_last_devin_message() -> None:
     requests: list[httpx.Request] = []
 
