@@ -1,0 +1,71 @@
+# Rules match event types and optional data fields, then group and count matches in a rolling window.
+
+[[rule]]
+name = "mic_all_zero"
+title = "Microphone delivers only zeros"
+severity = "high"
+types = ["mic.check"]
+where = { verdict = "silent" }
+threshold = 3
+window = "6h"
+
+[[rule]]
+name = "mic_silent_stream"
+title = "Microphone stream silent while running"
+severity = "high"
+types = ["mic.silent_stream"]
+threshold = 3
+window = "6h"
+
+[[rule]]
+name = "live_error"
+title = "Live sessions keep failing"
+severity = "medium"
+types = ["live.api_error", "live.session_failed", "live.connection_dropped", "live.startup_timeout"]
+threshold = 5
+window = "24h"
+
+[[rule]]
+name = "tool_failed"
+title = "Tool {tool} keeps failing"
+severity = "medium"
+types = ["tool.completed"]
+where = { ok = false }
+group_by = ["tool"]
+threshold = 5
+window = "24h"
+
+[[rule]]
+name = "watchdog_restart"
+title = "Watchdog keeps restarting the app"
+severity = "high"
+types = ["daemon.lost"]
+threshold = 3
+window = "1h"
+
+[[rule]]
+name = "daemon_lost_unrecovered"
+title = "Reachy daemon lost and did not recover"
+severity = "critical"
+types = ["daemon.lost", "daemon.not_ready"]
+cleared_by = "daemon.ready"
+clear_within = "10m"
+threshold = 1
+window = "24h"
+
+[[rule]]
+name = "devin_job_failed"
+title = "Devin jobs keep failing"
+severity = "medium"
+types = ["job.start_failed", "devin.request_failed"]
+threshold = 5
+window = "24h"
+
+[[rule]]
+name = "uncaught_error"
+title = "Unexpected error: {message}"
+severity = "medium"
+types = ["log.error"]
+group_by = ["message"]
+threshold = 5
+window = "24h"

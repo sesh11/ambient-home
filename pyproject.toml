@@ -47,7 +47,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-ambient_home = ["models/*.onnx", "profiles/**/*.md", "ui/index.html", "launchd/*.plist"]
+ambient_home = ["models/*.onnx", "profiles/**/*.md", "ui/index.html", "launchd/*.plist", "incident_rules.toml"]
 
 [tool.ruff]
 line-length = 119

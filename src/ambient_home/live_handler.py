@@ -37,6 +37,7 @@ from reachy_mini_conversation_app.tools.background_tool_manager import (
 from ambient_home.audio import PrerollBuffer, pcm16_to_base64, frame_to_mono_int16
 from ambient_home.config import AmbientSettings
 from ambient_home.spend_log import SpendLog, SpendRecord
+from ambient_home.telemetry import emit
 from ambient_home.wake_word import WakeWordDetector
 from ambient_home.session_gate import GateState, CloseReason, SessionGate
 
@@ -152,6 +153,7 @@ class GPTLiveHandler(ConversationHandler):
             if not self.gate.can_wake():
                 if not self._budget_warning_logged:
                     logger.warning("Daily Live audio budget exhausted; remaining asleep.")
+                    emit("live.budget_exhausted", "live", "warning")
                     self._budget_warning_logged = True
                 continue
             self._budget_warning_logged = False
@@ -161,11 +163,13 @@ class GPTLiveHandler(ConversationHandler):
                 raise
             except ConnectionClosed as exc:
                 logger.warning("Live connection dropped (%s); back to sleep.", exc)
+                emit("live.connection_dropped", "live", "warning", error=str(exc))
                 if self.gate.state is GateState.LIVE:
                     self.gate.close(CloseReason.ERROR)
                 await asyncio.sleep(2.0)
-            except Exception:
+            except Exception as exc:
                 logger.exception("Live session failed")
+                emit("live.session_failed", "live", "error", exc_type=type(exc).__name__, error=str(exc))
                 if self.gate.state is GateState.LIVE:
                     self.gate.close(CloseReason.ERROR)
                 await asyncio.sleep(2.0)
@@ -208,6 +212,7 @@ class GPTLiveHandler(ConversationHandler):
                 "(pollen-robotics/reachy_mini#770). Run `uv run ambient-mic-check --reboot-xmos`, then "
                 "restart ambient-home; if still silent, check the microphone FPC cable."
             )
+            emit("mic.silent_stream", "live", "error", seconds=self._received_audio_seconds)
             self._silence_error_logged = True
         if not self._is_connected():
             self._preroll.append(mono)
@@ -228,6 +233,7 @@ class GPTLiveHandler(ConversationHandler):
                 self._asleep_peak_mic_rms = 0.0
             if wake_detected:
                 logger.info("Wake word detected (score=%.2f)", self.wake_detector.last_score)
+                emit("wake.detected", "live", score=self.wake_detector.last_score)
                 self._wake_event.set()
             return
         if self.connection is not None:
@@ -273,6 +279,7 @@ class GPTLiveHandler(ConversationHandler):
         """Run one Live connection from startup through terminal close."""
         if not self.settings.openai_api_key:
             logger.error("OPENAI_API_KEY is required to wake a Live session")
+            emit("live.missing_api_key", "live", "error")
             return
         self._last_server_reason = None
         self._last_usage_seconds = None
@@ -287,9 +294,11 @@ class GPTLiveHandler(ConversationHandler):
                         await self._handle_event(event_data)
                         if event_data.get("type") == "session.started":
                             started = True
+                            emit("live.session_started", "live")
                             break
             except TimeoutError:
                 logger.error("Timed out waiting for session.started")
+                emit("live.startup_timeout", "live", "error")
                 return
             if not started:
                 return
@@ -384,6 +393,19 @@ class GPTLiveHandler(ConversationHandler):
                 self._last_usage_seconds = float(usage["seconds"])
         elif event_type == "error":
             logger.error("Live API error: %s", event)
+            error_payload = event.get("error")
+            error_data: dict[str, object] = {}
+            if isinstance(error_payload, dict):
+                code = error_payload.get("code")
+                error_type = error_payload.get("type")
+                message = error_payload.get("message")
+                if isinstance(code, (str, int, float, bool)):
+                    error_data["code"] = code
+                if isinstance(error_type, str):
+                    error_data["error_type"] = error_type
+                if isinstance(message, str):
+                    error_data["error"] = message
+            emit("live.api_error", "live", "error", **error_data)
             await self.output_queue.put(AdditionalOutputs({"role": "assistant", "content": f"[error] {event}"}))
         else:
             logger.debug("Ignoring Live event %s", event_type)
@@ -402,6 +424,8 @@ class GPTLiveHandler(ConversationHandler):
         arguments = item.get("arguments")
         if not isinstance(call_id, str) or not isinstance(name, str) or not isinstance(arguments, str):
             logger.error("Malformed Live function call: %s", item)
+            malformed_data = {"tool": name} if isinstance(name, str) else {}
+            emit("live.malformed_tool_call", "live", "error", **malformed_data)
             return
         self._in_flight_tool_calls.add(call_id)
         await self.tool_manager.start_tool(
@@ -416,8 +440,17 @@ class GPTLiveHandler(ConversationHandler):
         if completed_tool.error is not None:
             result: object = {"error": completed_tool.error}
             logger.error("Tool %s failed: %s", completed_tool.tool_name, completed_tool.error)
+            emit(
+                "tool.completed",
+                "live",
+                "error",
+                tool=completed_tool.tool_name,
+                ok=False,
+                error=completed_tool.error,
+            )
         else:
             result = completed_tool.result or {"error": "No result returned from tool execution"}
+            emit("tool.completed", "live", tool=completed_tool.tool_name, ok=True)
         await self.output_queue.put(AdditionalOutputs({"role": "assistant", "content": json.dumps(result)}))
         connection = self.connection
         if connection is None or completed_tool.is_idle_tool_call:
@@ -532,8 +565,9 @@ class GPTLiveHandler(ConversationHandler):
             await asyncio.to_thread(self.deps.reachy_mini.wake_up)
             await asyncio.to_thread(self.deps.movement_manager.start)
             self.deps.movement_manager.set_listening(False)
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to wake robot")
+            emit("robot.wake_failed", "live", "error", exc_type=type(exc).__name__)
 
     async def _sleep_robot(self) -> None:
         try:
@@ -543,8 +577,9 @@ class GPTLiveHandler(ConversationHandler):
                 logger.debug("Failed to disable robot wobbling before sleep", exc_info=True)
             await asyncio.to_thread(self.deps.movement_manager.stop, reset_to_neutral=False)
             await asyncio.to_thread(self.deps.reachy_mini.goto_sleep)
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to put robot to sleep")
+            emit("robot.sleep_failed", "live", "error", exc_type=type(exc).__name__)
 
     async def prepare_asleep(self) -> None:
         """Put the robot in its sleep pose before audio streaming starts."""
@@ -561,3 +596,4 @@ class GPTLiveHandler(ConversationHandler):
                 reported_usage_seconds=self._last_usage_seconds,
             )
         )
+        emit("live.session_ended", "live", reason=reason.value, seconds=elapsed)

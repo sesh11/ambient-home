@@ -11,6 +11,7 @@ from openai.types.responses.response_input_text_param import ResponseInputTextPa
 from openai.types.responses.response_input_image_param import ResponseInputImageParam
 
 from ambient_home.runtime import get_settings
+from ambient_home.telemetry import emit
 
 
 logger = logging.getLogger(__name__)
@@ -59,4 +60,5 @@ class Look(Tool):
             return {"description": response.output_text}
         except Exception as exc:
             logger.exception("Vision tool failed")
+            emit("vision.failed", "vision", "error", exc_type=type(exc).__name__)
             return {"error": str(exc)}
