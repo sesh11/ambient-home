@@ -171,6 +171,16 @@ restart `Microphone check: ok` (or `Microphone recovered after audio processor
 restart`), `Reachy daemon ready`, and the asleep heartbeat. Reachy should be
 listening for the wake word within about 30 s of the replug.
 
+## Hardware test loop (Devin Outposts)
+
+`uv run ambient-hw-test --pr <n>` checks out a PR into a separate worktree,
+runs the gate, pauses the app LaunchAgent, checks the daemon, microphone and
+antenna motion, smoke-tests the app on a side port, restores the agent and
+prints a pass/fail report. Run on a Devin Outpost on the Reachy Mac, it lets
+a Devin session test PRs on the real robot. See
+[docs/outpost-hw-test.md](docs/outpost-hw-test.md) for the secure setup and
+the playbook.
+
 ## Costs
 
 The dashboard charts daily usage over the last `AMBIENT_COST_HISTORY_DAYS`
