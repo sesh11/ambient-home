@@ -9,6 +9,8 @@ from collections.abc import Sequence
 import numpy as np
 from numpy.typing import NDArray
 
+from ambient_home.telemetry import emit
+
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +82,19 @@ def restart_audio_processor(settle_s: float = XMOS_RESTART_SETTLE_S) -> bool:
     device: ReSpeaker | None = init_respeaker_usb()
     if device is None:
         logger.error("Reachy Mini Audio USB device not found; cannot restart the audio processor.")
+        emit("mic.device_missing", "mic_check", "error")
+        emit("mic.restart", "mic_check", ok=False)
         return False
     try:
-        device.write("REBOOT", [1])
-    finally:
-        device.close()
-    time.sleep(settle_s)
+        try:
+            device.write("REBOOT", [1])
+        finally:
+            device.close()
+        time.sleep(settle_s)
+    except Exception:
+        emit("mic.restart", "mic_check", ok=False)
+        raise
+    emit("mic.restart", "mic_check", ok=True)
     return True
 
 
@@ -124,16 +133,33 @@ def ensure_microphone_audio(seconds: float = 1.5) -> str:
     the wake-word loop starts. Returns the final verdict.
     """
     probe = probe_microphone(seconds)
+    emit(
+        "mic.check",
+        "mic_check",
+        verdict=probe.verdict,
+        frames=probe.frames,
+        peak=probe.peak,
+        stage="initial",
+    )
     if probe.verdict != "silent":
         logger.info("Microphone check: %s (peak=%.6f)", probe.verdict, probe.peak)
         return probe.verdict
     if probe.frames == 0:
         logger.error("Microphone delivered no frames; is the Reachy Mini Audio device connected?")
+        emit("mic.device_missing", "mic_check", "error")
         return probe.verdict
     logger.warning("Microphone returned only zeros (%d frames); restarting the audio processor.", probe.frames)
     if not restart_audio_processor():
         return probe.verdict
     recheck = probe_microphone(seconds)
+    emit(
+        "mic.check",
+        "mic_check",
+        verdict=recheck.verdict,
+        frames=recheck.frames,
+        peak=recheck.peak,
+        stage="after_restart",
+    )
     if recheck.verdict == "silent":
         logger.error(
             "Microphone still silent after restarting the audio processor. "

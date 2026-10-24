@@ -33,6 +33,17 @@
     .legend { color: #666; font-size: .8rem; }
     .swatch { border-radius: 2px; display: inline-block; height: .6rem; width: .6rem; }
     .swatch.live { background: #198754; } .swatch.acu { background: #3b82f6; }
+    #page-incidents th:nth-child(1) { width: 12%; } #page-incidents th:nth-child(2) { width: 48%; }
+    #page-incidents th:nth-child(3) { width: 10%; } #page-incidents th:nth-child(4) { width: 15%; }
+    #page-incidents th:nth-child(5) { width: 15%; }
+    .sev { border-radius: 4px; display: inline-block; font-size: .8rem; padding: .1rem .45rem; }
+    .sev.low { background: #e5e7eb; } .sev.medium { background: #fef3c7; }
+    .sev.high { background: #fed7aa; } .sev.critical { background: #b42318; color: white; }
+    .pill { border-radius: 999px; font-size: .8rem; padding: .15rem .6rem; white-space: nowrap; }
+    .pill.ready { background: #b42318; color: white; } .pill.observed { background: #e5e7eb; color: #333; }
+    details { margin-top: .35rem; } summary { color: #666; cursor: pointer; font-size: .85rem; }
+    .samples { font: .75rem ui-monospace, monospace; margin: .35rem 0 0; max-height: 12rem; overflow: auto; white-space: pre-wrap; }
+    .empty { color: #666; padding: 1rem .6rem; }
   </style>
 </head>
 <body>
@@ -41,6 +52,7 @@
     <nav>
       <a id="nav-jobs" href="#/jobs">Job board</a>
       <a id="nav-costs" href="#/costs">Cost tracking</a>
+      <a id="nav-incidents" href="#/incidents">Incidents</a>
     </nav>
     <div>
       <span id="state" class="badge asleep">ASLEEP</span>
@@ -65,8 +77,25 @@
     </div>
     <p class="legend"><span class="swatch live"></span> Live audio $ · <span class="swatch acu"></span> worker ACU $ · estimates from local rates</p>
   </section>
+  <section id="page-incidents" hidden>
+    <h2>Incidents</h2>
+    <p class="meta">
+      <label>Window
+        <select id="incident-window">
+          <option value="6h">last 6 hours</option>
+          <option value="12h">last 12 hours</option>
+          <option value="24h" selected>last 24 hours</option>
+        </select>
+      </label>
+      · <span id="incident-meta"></span>
+    </p>
+    <table>
+      <thead><tr><th>Severity</th><th>Incident</th><th>Count</th><th>Last seen</th><th>Status</th></tr></thead>
+      <tbody id="incidents"></tbody>
+    </table>
+  </section>
   <script>
-    const PAGES = ["jobs", "costs"];
+    const PAGES = ["jobs", "costs", "incidents"];
     function currentPage() {
       const hash = location.hash.replace("#/", "").trim();
       if (PAGES.includes(hash)) {
@@ -246,17 +275,95 @@
         }
       });
     }
+    function formatWindow(seconds) {
+      return seconds % 86400 === 0 ? seconds / 86400 + "d" : seconds % 3600 === 0 ? seconds / 3600 + "h" :
+        Math.round(seconds / 60) + "m";
+    }
+    function sampleText(event) {
+      const details = Object.entries(event.data).map(([key, value]) => key + "=" + value).join(" ");
+      return new Date(event.ts).toLocaleTimeString() + "  " + event.type + (details ? "  " + details : "");
+    }
+    const openIncidents = new Set();
+    function createIncidentRow(incident) {
+      const row = document.createElement("tr");
+      row.dataset.fingerprint = incident.fingerprint;
+      row.innerHTML =
+        '<td><span class="sev"></span></td>' +
+        '<td><div class="title"></div><div class="meta rule"></div>' +
+        '<details><summary></summary><pre class="samples"></pre></details></td>' +
+        '<td class="count"></td><td class="last-seen"></td><td><span class="pill"></span></td>';
+      row.querySelector("details").addEventListener("toggle", event => {
+        if (event.target.open) {
+          openIncidents.add(incident.fingerprint);
+        } else {
+          openIncidents.delete(incident.fingerprint);
+        }
+      });
+      return row;
+    }
+    function updateIncidentRow(row, incident) {
+      const severity = row.querySelector(".sev");
+      severity.className = "sev " + incident.severity;
+      severity.textContent = incident.severity;
+      row.querySelector(".title").textContent = incident.title;
+      row.querySelector(".rule").textContent = incident.fingerprint;
+      row.querySelector("summary").textContent = "Evidence (" + incident.samples.length + " latest events)";
+      row.querySelector(".samples").textContent = incident.samples.slice().reverse().map(sampleText).join("\n");
+      row.querySelector("details").open = openIncidents.has(incident.fingerprint);
+      row.querySelector(".count").textContent =
+        incident.count + " / " + incident.threshold + " in " + formatWindow(incident.window_s);
+      row.querySelector(".last-seen").textContent = new Date(incident.last_seen).toLocaleString();
+      const pill = row.querySelector(".pill");
+      pill.className = "pill " + (incident.ready ? "ready" : "observed");
+      pill.textContent = incident.ready ? "Ready for fix" : "Observed";
+    }
+    function renderIncidents(report) {
+      const body = document.getElementById("incidents");
+      const windowLabel = document.getElementById("incident-window").selectedOptions[0].textContent;
+      const ready = report.incidents.filter(incident => incident.ready).length;
+      document.getElementById("incident-meta").textContent =
+        report.incidents.length + " incidents, " + ready + " ready for fix · detector: " +
+        (report.detector || "none");
+      const existingRows = Array.from(body.querySelectorAll("tr[data-fingerprint]"));
+      body.querySelectorAll("tr.empty-row").forEach(row => row.remove());
+      const seen = new Set();
+      report.incidents.forEach(incident => {
+        let row = existingRows.find(candidate => candidate.dataset.fingerprint === incident.fingerprint);
+        if (!row) {
+          row = createIncidentRow(incident);
+        }
+        updateIncidentRow(row, incident);
+        body.appendChild(row);
+        seen.add(incident.fingerprint);
+      });
+      existingRows.forEach(row => {
+        if (!seen.has(row.dataset.fingerprint)) {
+          row.remove();
+        }
+      });
+      if (!report.incidents.length) {
+        const row = document.createElement("tr");
+        row.className = "empty-row";
+        row.innerHTML = '<td colspan="5" class="empty"></td>';
+        row.querySelector("td").textContent = "No incidents in the " + windowLabel + ".";
+        body.appendChild(row);
+      }
+    }
     async function refresh() {
       renderNav();
       const status = await (await fetch("/api/status")).json();
       renderLive(status.live);
       if (currentPage() === "jobs") {
         renderJobs(status.jobs);
+      } else if (currentPage() === "incidents") {
+        const since = document.getElementById("incident-window").value;
+        renderIncidents(await (await fetch("/api/incidents?since=" + encodeURIComponent(since))).json());
       } else {
         renderCosts(await (await fetch("/api/costs")).json());
       }
     }
     window.addEventListener("hashchange", refresh);
+    document.getElementById("incident-window").addEventListener("change", refresh);
     refresh();
     setInterval(refresh, 2000);
   </script>

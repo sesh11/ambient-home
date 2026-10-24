@@ -2,6 +2,7 @@
 
 import httpx
 
+from ambient_home import daemon
 from ambient_home.daemon import watch_daemon, wait_for_daemon, fetch_daemon_state
 
 
@@ -46,3 +47,33 @@ async def test_watch_daemon_reports_loss_after_consecutive_failures() -> None:
         await watch_daemon("http://d/status", poll_s=0.0, max_failures=3, on_lost=on_lost, client=client)
 
     assert lost == ["unreachable"]
+
+
+async def test_watch_daemon_emits_failure_and_loss_events(monkeypatch) -> None:
+    events: list[tuple[str, str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        daemon, "emit", lambda name, component, level="info", **data: events.append((name, level, data))
+    )
+
+    async def on_lost(state: str) -> None:
+        return
+
+    async with _client([None, None]) as client:
+        await watch_daemon("http://d/status", poll_s=0.0, max_failures=2, on_lost=on_lost, client=client)
+
+    assert [name for name, _, _ in events] == ["daemon.check_failed", "daemon.check_failed", "daemon.lost"]
+    assert events[-1][1] == "error"
+
+
+def test_exit_process_emits_before_os_exit(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        daemon,
+        "emit",
+        lambda name, component, level="info", **data: calls.append(f"event:{name}:{data['code']}"),
+    )
+    monkeypatch.setattr(daemon.os, "_exit", lambda code: calls.append(f"exit:{code}"))
+
+    daemon.exit_process(75, "restart")
+
+    assert calls == ["event:process.exit:75", "exit:75"]

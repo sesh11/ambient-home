@@ -1,9 +1,10 @@
 """Ambient-home command-line entry point."""
 
 import os
+import time
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections.abc import Callable, Awaitable
 
 import uvicorn
@@ -22,6 +23,7 @@ from ambient_home.daemon import (
 from ambient_home.runtime import set_settings, set_job_service, set_cost_tracker
 from ambient_home.mic_check import ensure_microphone_audio
 from ambient_home.spend_log import SpendLog
+from ambient_home.telemetry import EventLog, emit, configure
 from ambient_home.wake_word import OpenWakeWordDetector
 from ambient_home.jobs.board import JobBoard
 from ambient_home.jobs.devin import NullWorker, DevinWorker
@@ -29,6 +31,9 @@ from ambient_home.jobs.worker import Worker
 from ambient_home.jobs.service import JobService
 from ambient_home.live_handler import LiveStatus
 from ambient_home.session_gate import GateState, CloseReason, SessionGate
+from ambient_home.incidents.monitor import IncidentMonitor
+from ambient_home.incidents.registry import build_detector
+from ambient_home.telemetry.logging_bridge import EventLoggingHandler
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +57,16 @@ def main() -> None:
     from ambient_home.live_handler import GPTLiveHandler
 
     settings = settings_from_env()
+    event_log = EventLog(settings.events_dir, retention_days=settings.event_retention_days)
+    configure(event_log)
+    event_log.prune()
+    logging.getLogger().addHandler(EventLoggingHandler())
+    detector = build_detector(settings)
+    monitor = IncidentMonitor(
+        detector,
+        event_log,
+        lookback=timedelta(seconds=settings.incident_lookback_s),
+    )
     set_settings(settings)
     current_handler: GPTLiveHandler | None = None
     background_factories: list[Callable[[], Awaitable[None]]] = []
@@ -104,8 +119,9 @@ def main() -> None:
     if settings.mic_autorecover:
         try:
             ensure_microphone_audio()
-        except Exception:
+        except Exception as exc:
             logger.exception("Microphone check failed; continuing to daemon wait")
+            emit("mic.check_failed", "mic_check", "error", error=str(exc), exc_type=type(exc).__name__)
     if not asyncio.run(wait_for_daemon(settings.daemon_status_url, settings.daemon_wait_s)):
         exit_process(DAEMON_UNAVAILABLE_EXIT_CODE, "Reachy daemon did not become ready")
     try:
@@ -157,7 +173,15 @@ def main() -> None:
         )
 
     handler = build_handler(settings.voice)
-    ui_app = create_app(status, job_service, request_stop, cost_tracker)
+    ui_app = create_app(
+        status,
+        job_service,
+        request_stop,
+        cost_tracker,
+        event_log=event_log,
+        monitor=monitor,
+        detector=detector,
+    )
     ui_server = uvicorn.Server(
         uvicorn.Config(ui_app, host=settings.ui_host, port=settings.ui_port, log_level="warning")
     )
@@ -176,12 +200,32 @@ def main() -> None:
             daemon_lost,
         )
 
+    async def run_heartbeat() -> None:
+        started_at = time.monotonic()
+        while True:
+            await asyncio.sleep(settings.heartbeat_s)
+            emit(
+                "app.heartbeat",
+                "app",
+                state=gate.state.value,
+                uptime_s=time.monotonic() - started_at,
+            )
+
     background_factories.extend(
         [
             lambda: job_service.run_poller(settings.job_poll_s),
             run_ui,
             run_daemon_watchdog,
+            run_heartbeat,
+            monitor.run,
         ]
+    )
+    emit(
+        "app.started",
+        "app",
+        wake_word=settings.wake_word,
+        live_model=settings.live_model,
+        backend_model=settings.backend_model,
     )
     logger.info(
         "Starting ambient-home model=%s backend=%s voice=%s wake=%s profile=%s profiles_dir=%s daily_budget_s=%s",

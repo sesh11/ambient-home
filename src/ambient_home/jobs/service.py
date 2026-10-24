@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Awaitable
 
+from ambient_home.telemetry import emit
 from ambient_home.jobs.board import Job, JobBoard, JobStatus
 from ambient_home.jobs.worker import Worker
 
@@ -34,6 +35,7 @@ class JobService:
             self.board.update(updated)
         except Exception as exc:
             logger.exception("Failed to start job %s", job.id)
+            emit("job.start_failed", "jobs", "error", job_id=job.id, exc_type=type(exc).__name__, error=str(exc))
             job.status = JobStatus.failed
             job.error = str(exc)
             self.board.update(job)
@@ -48,6 +50,7 @@ class JobService:
             self.board.update(job)
         except Exception as exc:
             logger.exception("Failed to answer job %s", job_id)
+            emit("job.answer_failed", "jobs", "error", job_id=job_id, exc_type=type(exc).__name__, error=str(exc))
             job.error = str(exc)
             self.board.update(job)
         return job
@@ -75,16 +78,26 @@ class JobService:
                     if job.status not in {JobStatus.working, JobStatus.blocked}:
                         continue
                     before = job.model_dump()
+                    previous_status = job.status
                     refreshed = await self.worker.refresh(job)
                     if refreshed.model_dump() != before:
                         self.board.update(refreshed)
+                    if refreshed.status is not previous_status:
+                        emit(
+                            "job.status_changed",
+                            "jobs",
+                            job_id=job.id,
+                            status=refreshed.status.value,
+                            acus_consumed=refreshed.acus_consumed,
+                        )
                 for job in self.board.unannounced():
                     await self.announcer(self._announcement(job))
                     self.board.mark_announced(job)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception("Job poller iteration failed")
+                emit("job.poller_failed", "jobs", "error", exc_type=type(exc).__name__)
             await asyncio.sleep(interval_s)
 
     def cancel(self, job_id: str) -> Job | None:

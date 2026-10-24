@@ -9,6 +9,8 @@ from collections.abc import Callable, Awaitable
 
 import httpx
 
+from ambient_home.telemetry import emit
+
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,7 @@ async def wait_for_daemon(
             state = await fetch_daemon_state(http, status_url)
             if state == READY_STATE:
                 logger.info("Reachy daemon ready at %s", status_url)
+                emit("daemon.ready", "daemon", state=state)
                 return True
             if state != last_state or not logged_waiting:
                 logger.info("Waiting for Reachy daemon at %s (state=%s)", status_url, state or "unreachable")
@@ -57,6 +60,13 @@ async def wait_for_daemon(
                 logged_waiting = True
             if time.monotonic() >= deadline:
                 logger.error("Reachy daemon not ready after %.0f s (state=%s)", timeout_s, state or "unreachable")
+                emit(
+                    "daemon.not_ready",
+                    "daemon",
+                    "error",
+                    state=state or "unreachable",
+                    timeout_s=timeout_s,
+                )
                 return False
             await asyncio.sleep(poll_s)
     finally:
@@ -82,13 +92,24 @@ async def watch_daemon(
             if state == READY_STATE:
                 if failures:
                     logger.info("Reachy daemon reachable again (state=%s)", state)
+                    emit("daemon.recovered", "daemon", state=state)
+                    emit("daemon.ready", "daemon", state=state)
                 failures = 0
                 continue
             failures += 1
             logger.warning(
                 "Reachy daemon check failed (%d/%d, state=%s)", failures, max_failures, state or "unreachable"
             )
+            emit(
+                "daemon.check_failed",
+                "daemon",
+                "warning",
+                failures=failures,
+                max_failures=max_failures,
+                state=state or "unreachable",
+            )
             if failures >= max_failures:
+                emit("daemon.lost", "daemon", "error", state=state or "unreachable")
                 await on_lost(state or "unreachable")
                 return
     finally:
@@ -99,5 +120,6 @@ async def watch_daemon(
 def exit_process(code: int, reason: str) -> NoReturn:
     """Terminate the process immediately so the service supervisor restarts it."""
     logger.error("Exiting with status %d: %s", code, reason)
+    emit("process.exit", "daemon", "error", code=code, reason=reason)
     logging.shutdown()
     os._exit(code)

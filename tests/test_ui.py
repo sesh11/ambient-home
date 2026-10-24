@@ -1,5 +1,7 @@
 """Local status UI tests."""
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from ambient_home.ui import create_app
@@ -10,6 +12,8 @@ from ambient_home.jobs.devin import NullWorker
 from ambient_home.jobs.service import JobService
 from ambient_home.live_handler import LiveStatus
 from ambient_home.session_gate import GateState
+from ambient_home.incidents.rules import RuleDetector
+from ambient_home.telemetry.events import EventLog
 
 
 async def noop_stop() -> None:
@@ -128,3 +132,74 @@ def test_answer_unknown_job_returns_not_found(tmp_path) -> None:
 
     assert response.status_code == 404
     assert response.json() == {"error": "unknown job"}
+
+
+def test_incidents_page_serves_ui(tmp_path) -> None:
+    service = JobService(JobBoard(tmp_path / "jobs.json"), NullWorker(), lambda text: noop_stop())
+    app = create_app(
+        lambda: LiveStatus(GateState.ASLEEP, 0.0, 0.0, 0.0, None),
+        service,
+        noop_stop,
+        build_tracker(service.board, tmp_path),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/incidents")
+
+    assert response.status_code == 200
+    assert "<!doctype html>" in response.text.lower()
+
+
+def test_events_route_filters_since_type_and_limit_and_rejects_bad_since(tmp_path) -> None:
+    service = JobService(JobBoard(tmp_path / "jobs.json"), NullWorker(), lambda text: noop_stop())
+    event_log = EventLog(tmp_path / "events")
+    event_log.emit("mic.check", "mic", verdict="ok")
+    event_log.emit("daemon.ready", "daemon")
+    app = create_app(
+        lambda: LiveStatus(GateState.ASLEEP, 0.0, 0.0, 0.0, None),
+        service,
+        noop_stop,
+        build_tracker(service.board, tmp_path),
+        event_log=event_log,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/events?since=12h&type=mic.check&limit=1")
+        invalid = client.get("/api/events?since=soon")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert len(payload["events"]) == 1
+    assert payload["events"][0]["type"] == "mic.check"
+    assert invalid.status_code == 400
+    assert "error" in invalid.json()
+
+
+def test_incidents_route_detects_from_event_log(tmp_path) -> None:
+    service = JobService(JobBoard(tmp_path / "jobs.json"), NullWorker(), lambda text: noop_stop())
+    event_log = EventLog(tmp_path / "events")
+    for _ in range(3):
+        event_log.emit("mic.check", "mic", verdict="silent")
+    rules_path = Path(__file__).parents[1] / "src" / "ambient_home" / "incident_rules.toml"
+    detector = RuleDetector.from_file(rules_path)
+    app = create_app(
+        lambda: LiveStatus(GateState.ASLEEP, 0.0, 0.0, 0.0, None),
+        service,
+        noop_stop,
+        build_tracker(service.board, tmp_path),
+        event_log=event_log,
+        detector=detector,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/incidents?since=24h")
+        invalid = client.get("/api/incidents?since=soon")
+
+    assert response.status_code == 200
+    assert response.json()["detector"] == "rules"
+    incident = response.json()["incidents"][0]
+    assert incident["rule"] == "mic_all_zero"
+    assert incident["count"] == 3
+    assert incident["ready"]
+    assert invalid.status_code == 400

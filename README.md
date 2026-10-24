@@ -90,6 +90,30 @@ With the app running, open <http://127.0.0.1:8765/> for live state, daily
 usage, job status, pull-request links, and a stop-session button. Cancelling a
 job through an API is not implemented in this MVP.
 
+## Telemetry and incidents
+
+Structured events are stored locally as daily JSONL files in
+`~/Library/Logs/ambient-home/events` by default. Set `AMBIENT_EVENTS_DIR` to
+override the location; files older than `AMBIENT_EVENT_RETENTION_DAYS` (14 by
+default) are pruned. Event data includes operational types, component names,
+status codes, durations, and scrubbed errors. Transcripts, prompts, request
+text, audio, Live payloads, and tool results are never recorded. Personal
+identifiers and common credentials are scrubbed before writing. Nothing in this
+telemetry path is sent to GitHub, Devin, or another remote service.
+
+The packaged `incident_rules.toml` defines the initial local rules. Override it
+with `AMBIENT_INCIDENT_RULES`; choose the implementation with
+`AMBIENT_DETECTOR=rules`. `ambient_home.incidents.base.Detector` is the stable
+async interface and `incidents/registry.py` is the single swap point for a
+future LLM-driven or auto-discovered detector.
+
+The local API exposes recent events and on-demand incident detection:
+
+```bash
+curl 'http://127.0.0.1:8765/api/events?since=12h&type=mic.check&limit=100'
+curl 'http://127.0.0.1:8765/api/incidents?since=24h'
+```
+
 ## Run as a service (macOS)
 
 Install both processes as per-user LaunchAgents so Reachy comes back on its

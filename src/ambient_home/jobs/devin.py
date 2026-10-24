@@ -5,6 +5,7 @@ import logging
 import httpx
 from pydantic import Field, BaseModel, ConfigDict
 
+from ambient_home.telemetry import emit
 from ambient_home.jobs.board import Job, JobStatus
 
 
@@ -138,6 +139,7 @@ class DevinWorker:
         except Exception as exc:
             detail = self._error_detail(exc)
             logger.error("Could not start Devin job %s: %s", job.id, detail)
+            emit("devin.request_failed", "jobs", "error", op="start", job_id=job.id, error=detail)
             job.status = JobStatus.failed
             job.error = detail
             return job
@@ -157,6 +159,7 @@ class DevinWorker:
             session = _SessionResponse.model_validate(response.json())
         except Exception as exc:
             logger.warning("Could not refresh Devin job %s: %s", job.id, exc)
+            emit("devin.request_failed", "jobs", "warning", op="refresh", job_id=job.id, error=str(exc))
             return job
 
         if session.acus_consumed is not None:
@@ -193,6 +196,7 @@ class DevinWorker:
             messages = _MessagesResponse.model_validate(response.json())
         except Exception as exc:
             logger.warning("Could not fetch Devin messages for %s: %s", session_id, exc)
+            emit("devin.request_failed", "jobs", "warning", op="messages", session_id=session_id, error=str(exc))
             return "Devin needs your input"
         for message in reversed(messages.items):
             if message.source == "devin":

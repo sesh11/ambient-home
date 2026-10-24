@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import field, dataclass
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,12 @@ class AmbientSettings:
     daemon_wait_s: float = 60.0
     daemon_watchdog_s: float = 5.0
     daemon_watchdog_failures: int = 3
+    events_dir: Path = field(default_factory=lambda: Path("~/Library/Logs/ambient-home/events").expanduser())
+    event_retention_days: int = 14
+    heartbeat_s: float = 300.0
+    detector: str = "rules"
+    incident_rules_path: Path | None = None
+    incident_lookback_s: float = 86400.0
 
 
 def _float_env(name: str, default: float) -> float:
@@ -103,4 +109,12 @@ def settings_from_env() -> AmbientSettings:
         daemon_wait_s=_float_env("AMBIENT_DAEMON_WAIT_S", 60.0),
         daemon_watchdog_s=_float_env("AMBIENT_DAEMON_WATCHDOG_S", 5.0),
         daemon_watchdog_failures=_int_env("AMBIENT_DAEMON_WATCHDOG_FAILURES", 3),
+        events_dir=Path(os.getenv("AMBIENT_EVENTS_DIR") or "~/Library/Logs/ambient-home/events").expanduser(),
+        event_retention_days=_int_env("AMBIENT_EVENT_RETENTION_DAYS", 14),
+        heartbeat_s=_float_env("AMBIENT_HEARTBEAT_S", 300.0),
+        detector=os.getenv("AMBIENT_DETECTOR", "rules"),
+        incident_rules_path=(
+            Path(os.environ["AMBIENT_INCIDENT_RULES"]).expanduser() if os.getenv("AMBIENT_INCIDENT_RULES") else None
+        ),
+        incident_lookback_s=_float_env("AMBIENT_INCIDENT_LOOKBACK_S", 86400.0),
     )
