@@ -43,6 +43,10 @@ class AmbientSettings:
     detector: str = "rules"
     incident_rules_path: Path | None = None
     incident_lookback_s: float = 86400.0
+    factory_report: bool = False
+    github_token: str | None = None
+    factory_repo: str = "sesh11/ambient-home"
+    factory_max_new_issues_per_day: int = 5
 
 
 def _float_env(name: str, default: float) -> float:
@@ -117,4 +121,8 @@ def settings_from_env() -> AmbientSettings:
             Path(os.environ["AMBIENT_INCIDENT_RULES"]).expanduser() if os.getenv("AMBIENT_INCIDENT_RULES") else None
         ),
         incident_lookback_s=_float_env("AMBIENT_INCIDENT_LOOKBACK_S", 86400.0),
+        factory_report=_bool_env("AMBIENT_FACTORY_REPORT", False),
+        github_token=os.getenv("AMBIENT_GITHUB_TOKEN") or None,
+        factory_repo=os.getenv("AMBIENT_FACTORY_REPO") or "sesh11/ambient-home",
+        factory_max_new_issues_per_day=_int_env("AMBIENT_FACTORY_MAX_NEW_ISSUES_PER_DAY", 5),
     )

@@ -2,25 +2,51 @@
 
 import asyncio
 import logging
+from typing import Protocol
 from collections.abc import Callable, Awaitable
 
 from ambient_home.telemetry import emit
 from ambient_home.jobs.board import Job, JobBoard, JobStatus
 from ambient_home.jobs.worker import Worker
+from ambient_home.factory.github import IssueRecord
 
 
 logger = logging.getLogger(__name__)
 Announcer = Callable[[str], Awaitable[None]]
 
 
+class RequestLog(Protocol):
+    """Records voice requests somewhere durable (a GitHub issue) before work starts."""
+
+    def wants(self, repository: str | None) -> bool:
+        """Return whether requests for this repository should be recorded."""
+        ...
+
+    async def file(self, job: Job) -> IssueRecord | None:
+        """Record the request and return the created issue, if any."""
+        ...
+
+    async def mark_fixing(self, number: int) -> None:
+        """Mark the recorded request as being worked on."""
+        ...
+
+
 class JobService:
     """Coordinate a persistent job board with a remote worker."""
 
-    def __init__(self, board: JobBoard, worker: Worker, announcer: Announcer) -> None:
-        """Configure job persistence, execution, and spoken announcements."""
+    def __init__(
+        self,
+        board: JobBoard,
+        worker: Worker,
+        announcer: Announcer,
+        *,
+        request_log: RequestLog | None = None,
+    ) -> None:
+        """Configure job persistence, execution, spoken announcements, and optional request issues."""
         self.board = board
         self.worker = worker
         self.announcer = announcer
+        self.request_log = request_log
 
     async def dispatch(self, request: str, repository: str | None = None) -> Job:
         """Persist a queued job and start it without blocking the caller."""
@@ -29,10 +55,39 @@ class JobService:
         asyncio.create_task(self._start(job), name=f"job-start-{job.id}")
         return job
 
+    async def _file_request(self, job: Job) -> None:
+        if self.request_log is None or not self.request_log.wants(job.repository):
+            return
+        try:
+            issue = await self.request_log.file(job)
+        except Exception as exc:
+            logger.exception("Could not file a GitHub issue for job %s", job.id)
+            emit(
+                "factory.report_failed", "factory", "error", job_id=job.id, exc_type=type(exc).__name__, error=str(exc)
+            )
+            return
+        if issue is not None:
+            job.issue_number = issue.number
+            job.issue_url = issue.url
+            self.board.update(job)
+
+    async def _mark_fixing(self, job: Job) -> None:
+        if self.request_log is None or job.issue_number is None or job.status is not JobStatus.working:
+            return
+        try:
+            await self.request_log.mark_fixing(job.issue_number)
+        except Exception as exc:
+            logger.exception("Could not relabel issue #%s for job %s", job.issue_number, job.id)
+            emit(
+                "factory.report_failed", "factory", "error", job_id=job.id, exc_type=type(exc).__name__, error=str(exc)
+            )
+
     async def _start(self, job: Job) -> None:
+        await self._file_request(job)
         try:
             updated = await self.worker.start(job)
             self.board.update(updated)
+            await self._mark_fixing(updated)
         except Exception as exc:
             logger.exception("Failed to start job %s", job.id)
             emit("job.start_failed", "jobs", "error", job_id=job.id, exc_type=type(exc).__name__, error=str(exc))
@@ -63,6 +118,7 @@ class JobService:
                 "status": job.status.value,
                 "request": job.request,
                 "pr_url": job.pr_url,
+                "issue_url": job.issue_url,
                 "question": job.question,
                 "error": job.error,
                 "acus_consumed": job.acus_consumed,

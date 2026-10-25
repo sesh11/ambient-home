@@ -76,6 +76,10 @@ same probe standalone.
 | `AMBIENT_DAEMON_WAIT_S` | `60` | How long to wait for the daemon at startup before exiting non-zero |
 | `AMBIENT_DAEMON_WATCHDOG_S` | `5` | Daemon liveness poll interval while running |
 | `AMBIENT_DAEMON_WATCHDOG_FAILURES` | `3` | Consecutive failed polls before the app exits for restart |
+| `AMBIENT_FACTORY_REPORT` | `false` | File incidents and voice fix/feature requests as GitHub issues |
+| `AMBIENT_GITHUB_TOKEN` | unset | Fine-grained token for the factory repo with only Issues: read and write |
+| `AMBIENT_FACTORY_REPO` | `sesh11/ambient-home` | Repository that receives factory issues |
+| `AMBIENT_FACTORY_MAX_NEW_ISSUES_PER_DAY` | `5` | Daily cap on new issues, per kind |
 
 Set `AMBIENT_WAKE_WORD=hey_alfred` to use the bundled custom wake-word model.
 
@@ -99,7 +103,8 @@ default) are pruned. Event data includes operational types, component names,
 status codes, durations, and scrubbed errors. Transcripts, prompts, request
 text, audio, Live payloads, and tool results are never recorded. Personal
 identifiers and common credentials are scrubbed before writing. Nothing in this
-telemetry path is sent to GitHub, Devin, or another remote service.
+telemetry path is sent to GitHub, Devin, or another remote service unless
+factory reports are turned on (see below).
 
 The packaged `incident_rules.toml` defines the initial local rules. Override it
 with `AMBIENT_INCIDENT_RULES`; choose the implementation with
@@ -112,6 +117,38 @@ The local API exposes recent events and on-demand incident detection:
 ```bash
 curl 'http://127.0.0.1:8765/api/events?since=12h&type=mic.check&limit=100'
 curl 'http://127.0.0.1:8765/api/incidents?since=24h'
+```
+
+## Factory reports (GitHub issues)
+
+With `AMBIENT_FACTORY_REPORT=true` and `AMBIENT_GITHUB_TOKEN` set, the app turns
+detected incidents into GitHub issues in `AMBIENT_FACTORY_REPO`:
+
+- One incident fingerprint is one issue. A hidden `<!-- factory-fingerprint: … -->`
+  marker in the body lets the app find it again after a restart.
+- New incidents open with `factory:incident` + `factory:observed`; at the rule's
+  threshold the label becomes `factory:ready-for-fix` (add it by hand to ask
+  sooner). Counts are refreshed in the body at most every 10 minutes; the only
+  comment is when an issue turns ready.
+- If a closed issue's incident is seen again after it was closed, the issue is
+  reopened with a comment. Events from before the close don't count.
+- Fixes or features asked for by voice for this repo (`dispatch_job` with
+  `repository=sesh11/ambient-home`) are filed as `factory:request` +
+  `factory:ready-for-fix`, skipping the observed step, and move to
+  `factory:fixing` once the Devin session starts. The Devin prompt carries the
+  issue link so the PR can say `Closes #N`.
+- Only scrubbed event fields go out, and the scrubber runs again on everything
+  posted. Voice request text is scrubbed too, but it is posted, so the repo
+  being public matters.
+- At most `AMBIENT_FACTORY_MAX_NEW_ISSUES_PER_DAY` new issues a day, per kind.
+
+Create the token at GitHub → Settings → Developer settings → Fine-grained
+tokens: repository access *only* `sesh11/ambient-home`, permission *Issues:
+Read and write* (Metadata read is added automatically). Preview or run one pass:
+
+```bash
+uv run ambient-report --dry-run --since 24h   # prints what it would post
+uv run ambient-report --since 24h             # posts it
 ```
 
 ## Run as a service (macOS)

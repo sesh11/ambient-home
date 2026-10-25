@@ -27,6 +27,7 @@ from ambient_home.telemetry import EventLog, emit, configure
 from ambient_home.wake_word import OpenWakeWordDetector
 from ambient_home.jobs.board import JobBoard
 from ambient_home.jobs.devin import NullWorker, DevinWorker
+from ambient_home.factory.cli import build_reporters
 from ambient_home.jobs.worker import Worker
 from ambient_home.jobs.service import JobService
 from ambient_home.live_handler import LiveStatus
@@ -67,6 +68,9 @@ def main() -> None:
         event_log,
         lookback=timedelta(seconds=settings.incident_lookback_s),
     )
+    reporter, request_logger = build_reporters(settings)
+    if reporter is not None:
+        monitor.add_listener(reporter.notify)
     set_settings(settings)
     current_handler: GPTLiveHandler | None = None
     background_factories: list[Callable[[], Awaitable[None]]] = []
@@ -113,7 +117,7 @@ def main() -> None:
         live_session_seconds=lambda: gate.session_elapsed_s,
     )
     set_cost_tracker(cost_tracker)
-    job_service = JobService(board, worker, announce)
+    job_service = JobService(board, worker, announce, request_log=request_logger)
     set_job_service(job_service)
     wake_detector = OpenWakeWordDetector(settings.wake_word, settings.wake_threshold)
     if settings.mic_autorecover:
@@ -181,6 +185,7 @@ def main() -> None:
         event_log=event_log,
         monitor=monitor,
         detector=detector,
+        reporter=reporter,
     )
     ui_server = uvicorn.Server(
         uvicorn.Config(ui_app, host=settings.ui_host, port=settings.ui_port, log_level="warning")
@@ -220,6 +225,8 @@ def main() -> None:
             monitor.run,
         ]
     )
+    if reporter is not None:
+        background_factories.append(reporter.run)
     emit(
         "app.started",
         "app",

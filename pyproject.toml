@@ -34,6 +34,7 @@ dev = [
 ambient-home = "ambient_home.main:main"
 ambient-mic-check = "ambient_home.mic_check:main"
 ambient-hw-test = "ambient_home.hw_test:main"
+ambient-report = "ambient_home.factory.cli:main"
 ambient-install-service = "ambient_home.service:install_main"
 ambient-uninstall-service = "ambient_home.service:uninstall_main"
 

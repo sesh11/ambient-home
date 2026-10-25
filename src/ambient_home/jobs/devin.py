@@ -56,8 +56,13 @@ class _SessionResponse(BaseModel):
 def build_prompt(job: Job) -> str:
     """Build a policy-constrained prompt for Devin."""
     repository = f"\nRepository: {job.repository}" if job.repository else ""
+    issue = (
+        f"\nGitHub issue: {job.issue_url} (put 'Closes #{job.issue_number}' in the PR body)"
+        if job.issue_url and job.issue_number
+        else ""
+    )
     return (
-        f"Request: {job.request}{repository}\n\n"
+        f"Request: {job.request}{repository}{issue}\n\n"
         "Rules: Work only in the repository named in the request (or the most plausible repository owned by the user if unnamed; ask if unsure). "
         "Open a pull request with your changes. Never merge, never push directly to main/master, never deploy, never modify branch protection or CI security settings. "
         "If you need a decision from the user, ask and wait. When done, fill the structured output (summary, risk, pr_url, ci_state)."
