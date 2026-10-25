@@ -2,6 +2,7 @@
 
 import json
 import asyncio
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 import httpx
@@ -15,7 +16,7 @@ from ambient_home.spend_log import SpendLog
 from ambient_home.jobs.board import Job, JobBoard, JobStatus
 from ambient_home.jobs.devin import NullWorker, build_prompt
 from ambient_home.factory.cli import main as report_main
-from ambient_home.factory.cli import build_reporters
+from ambient_home.factory.cli import detect_over, build_reporters
 from ambient_home.jobs.service import JobService
 from ambient_home.live_handler import LiveStatus
 from ambient_home.session_gate import GateState
@@ -31,6 +32,7 @@ from ambient_home.factory.report import (
     render_incident_body,
 )
 from ambient_home.incidents.base import Incident
+from ambient_home.incidents.rules import RuleDetector
 from ambient_home.telemetry.events import Event, EventLog
 from ambient_home.incidents.monitor import IncidentMonitor
 
@@ -443,3 +445,19 @@ def test_cli_requires_token_unless_dry_run(monkeypatch, capsys) -> None:
     monkeypatch.setattr("ambient_home.factory.cli.load_dotenv", lambda: None)
     assert report_main([]) == 2
     assert "AMBIENT_GITHUB_TOKEN" in capsys.readouterr().err
+
+
+async def test_detect_over_finds_incidents_older_than_their_rule_window() -> None:
+    rules = RuleDetector.from_file(Path(__file__).parents[1] / "src" / "ambient_home" / "incident_rules.toml")
+    old = NOW - timedelta(hours=30)
+    events = [
+        Event(ts=old + timedelta(minutes=i), type="mic.check", component="mic", data={"verdict": "silent"})
+        for i in range(3)
+    ]
+    events.append(Event(ts=NOW - timedelta(minutes=5), type="mic.check", component="mic", data={"verdict": "silent"}))
+
+    assert [i.count for i in await rules.detect(events, NOW)] == [1]
+    found = await detect_over(rules, events, NOW - timedelta(days=7), NOW)
+
+    assert len(found) == 1
+    assert found[0].ready and found[0].count == 3

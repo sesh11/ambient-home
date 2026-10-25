@@ -147,8 +147,8 @@ tokens: repository access *only* `sesh11/ambient-home`, permission *Issues:
 Read and write* (Metadata read is added automatically). Preview or run one pass:
 
 ```bash
-uv run ambient-report --dry-run --since 24h   # prints what it would post
-uv run ambient-report --since 24h             # posts it
+uv run ambient-report --dry-run --since 7d    # prints what it would post for incidents in the last 7 days
+uv run ambient-report --since 7d              # posts it
 ```
 
 ## Run as a service (macOS)
