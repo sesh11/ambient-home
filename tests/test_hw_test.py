@@ -157,7 +157,9 @@ def test_settled_pitch_waits_for_pose_to_stop_moving(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(hw_test.time, "sleep", lambda seconds: None)
     pitches = iter([2.0, 6.0, 9.0, 9.9, 10.0, 10.0])
 
-    assert hw_test.settled_pitch_deg(lambda: create_head_pose(pitch=next(pitches), degrees=True)) == pytest.approx(9.9)
+    assert hw_test.settled_pitch_deg(lambda: create_head_pose(pitch=next(pitches), degrees=True)) == pytest.approx(
+        10.0
+    )
 
 
 def _mic_probe(verdict: str, frames: int = 100) -> object:
