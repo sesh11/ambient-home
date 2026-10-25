@@ -60,6 +60,16 @@ def verdict(rms: float, peak: float) -> str:
     return "ok"
 
 
+def format_firmware_version(raw: object) -> str:
+    """Format the XMOS VERSION reply, e.g. ``[0, 2, 1, 4]`` (status byte, then version) as ``2.1.4``."""
+    if isinstance(raw, (list, tuple)) and raw and all(isinstance(part, int) for part in raw):
+        parts = list(raw)
+        if len(parts) == 4 and parts[0] == 0:
+            parts = parts[1:]
+        return ".".join(str(part) for part in parts)
+    return str(raw)
+
+
 def read_firmware_version() -> str:
     """Return the XMOS audio firmware version, or why it could not be read."""
     from reachy_mini.media.audio_control_utils import ReSpeaker, init_respeaker_usb
@@ -68,7 +78,7 @@ def read_firmware_version() -> str:
     if device is None:
         return "Reachy Mini Audio USB device not found"
     try:
-        return str(device.read("VERSION"))
+        return format_firmware_version(device.read("VERSION"))
     except ValueError as exc:
         return str(exc)
     finally:

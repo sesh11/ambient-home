@@ -71,3 +71,9 @@ def test_ensure_microphone_audio_no_frames_does_not_reboot(monkeypatch: pytest.M
     monkeypatch.setattr(mic_check, "restart_audio_processor", lambda: pytest.fail("must not reboot"))
 
     assert mic_check.ensure_microphone_audio() == "silent"
+
+
+def test_format_firmware_version() -> None:
+    assert mic_check.format_firmware_version([0, 2, 1, 4]) == "2.1.4"
+    assert mic_check.format_firmware_version((2, 1, 2)) == "2.1.2"
+    assert mic_check.format_firmware_version("bad reply") == "bad reply"
