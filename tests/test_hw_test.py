@@ -20,9 +20,9 @@ from ambient_home.hw_test import (
     CheckResult,
     run_checks,
     wake_phrase,
-    head_pitch_deg,
     check_telemetry,
     format_markdown,
+    rotation_between_deg,
 )
 from ambient_home.telemetry import EventLog
 
@@ -63,9 +63,11 @@ def test_wake_phrase() -> None:
     assert wake_phrase("/models/hey_jarvis.onnx") == "hey jarvis"
 
 
-def test_head_pitch_deg_reads_pitch() -> None:
-    assert head_pitch_deg(create_head_pose(pitch=10, degrees=True)) == pytest.approx(10.0)
-    assert head_pitch_deg(np.eye(4)) == pytest.approx(0.0)
+def test_rotation_between_deg_ignores_starting_tilt() -> None:
+    start = create_head_pose(roll=15, yaw=-20, pitch=-25, degrees=True)
+
+    assert rotation_between_deg(start, start @ create_head_pose(pitch=10, degrees=True)) == pytest.approx(10.0)
+    assert rotation_between_deg(np.eye(4), np.eye(4)) == pytest.approx(0.0, abs=1e-6)
 
 
 def test_check_telemetry_round_trip(tmp_path: Path) -> None:
@@ -153,13 +155,13 @@ def test_main_writes_reports_and_returns_exit_code(tmp_path: Path, monkeypatch: 
     assert events[-1].data["ok"] is False
 
 
-def test_settled_pitch_waits_for_pose_to_stop_moving(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_settled_pose_waits_for_pose_to_stop_moving(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(hw_test.time, "sleep", lambda seconds: None)
     pitches = iter([2.0, 6.0, 9.0, 9.9, 10.0, 10.0])
 
-    assert hw_test.settled_pitch_deg(lambda: create_head_pose(pitch=next(pitches), degrees=True)) == pytest.approx(
-        10.0
-    )
+    pose = hw_test.settled_pose(lambda: create_head_pose(pitch=next(pitches), degrees=True))
+
+    assert rotation_between_deg(np.eye(4), pose) == pytest.approx(10.0)
 
 
 def _mic_probe(verdict: str, frames: int = 100) -> object:

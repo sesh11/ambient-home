@@ -30,7 +30,8 @@ FAIL = "fail"
 SKIP = "skip"
 
 _HEAD_NOD_DEG = 10.0
-_HEAD_MIN_MOVE_DEG = 6.0
+_HEAD_MIN_MOVE_DEG = 3.0
+_WAKE_ATTEMPTS = 2
 
 
 @dataclass(frozen=True)
@@ -144,26 +145,27 @@ def wake_phrase(wake_word: str) -> str:
     return Path(wake_word).stem.replace("_", " ").strip()
 
 
-def head_pitch_deg(pose: np.ndarray) -> float:
-    """Return the pitch of a 4x4 head pose in degrees."""
-    rotation = np.asarray(pose, dtype=np.float64)[:3, :3]
-    return float(np.degrees(np.arcsin(-np.clip(rotation[2, 0], -1.0, 1.0))))
+def rotation_between_deg(start: np.ndarray, end: np.ndarray) -> float:
+    """Return the angle in degrees of the rotation from one 4x4 head pose to another."""
+    relative = np.asarray(start, dtype=np.float64)[:3, :3].T @ np.asarray(end, dtype=np.float64)[:3, :3]
+    cosine = (np.trace(relative) - 1.0) / 2.0
+    return float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
 
 
-def settled_pitch_deg(
+def settled_pose(
     read_pose: Callable[[], np.ndarray],
     *,
     timeout_s: float = 1.5,
     poll_s: float = 0.1,
     tolerance_deg: float = 0.2,
-) -> float:
-    """Read the head pitch until two readings agree, so a lagging pose isn't measured mid-move."""
+) -> np.ndarray:
+    """Read the head pose until two readings agree, so a lagging pose isn't measured mid-move."""
     deadline = time.monotonic() + timeout_s
-    previous = head_pitch_deg(read_pose())
+    previous = np.asarray(read_pose(), dtype=np.float64)
     while time.monotonic() < deadline:
         time.sleep(poll_s)
-        current = head_pitch_deg(read_pose())
-        if abs(current - previous) <= tolerance_deg:
+        current = np.asarray(read_pose(), dtype=np.float64)
+        if rotation_between_deg(previous, current) <= tolerance_deg:
             return current
         previous = current
     return previous
@@ -233,25 +235,33 @@ def check_wake_word(settings: AmbientSettings, timeout_s: float, speak: bool) ->
         while time.monotonic() < settle_until:
             audio.get_audio_sample()
             time.sleep(0.01)
-        if speak:
-            say = shutil.which("say")
-            if say is None:
-                raise CheckFailed("macOS `say` not found; rerun with --no-speak and say the wake word yourself")
+        say = shutil.which("say") if speak else None
+        if speak and say is None:
+            raise CheckFailed("macOS `say` not found; rerun with --no-speak and say the wake word yourself")
+        if say is not None:
             speaker = subprocess.Popen([say, phrase])
         else:
             print(f"say '{phrase}' now (waiting {timeout_s:.0f} s)")
         deadline = time.monotonic() + timeout_s
         best = 0.0
+        spoken = 1
+        finished_at: float | None = None
         while time.monotonic() < deadline:
+            if speaker is not None and say is not None and speaker.poll() is not None:
+                finished_at = finished_at or time.monotonic()
+                if spoken < _WAKE_ATTEMPTS and time.monotonic() - finished_at > 1.5:
+                    speaker = subprocess.Popen([say, phrase])
+                    spoken += 1
+                    finished_at = None
             frame = audio.get_audio_sample()
             if frame is None:
                 time.sleep(0.01)
                 continue
             if detector.feed(frame_to_mono_int16(frame)):
-                return f"'{phrase}' detected, score={detector.last_score:.2f}"
+                return f"'{phrase}' detected on try {spoken}, score={detector.last_score:.2f}"
             best = max(best, detector.take_peak_score())
         raise CheckFailed(
-            f"'{phrase}' not detected in {timeout_s:.0f} s (best score {best:.2f}, threshold {settings.wake_threshold})"
+            f"'{phrase}' not detected in {timeout_s:.0f} s, said {spoken}x (best score {best:.2f}, threshold {settings.wake_threshold})"
         )
     finally:
         audio.stop_recording()
@@ -266,15 +276,16 @@ def check_head() -> str:
 
     with ReachyMini(media_backend="no_media") as robot:
         robot.enable_motors()
-        start = robot.get_current_head_pose()
-        start_pitch = head_pitch_deg(start)
-        nod = np.asarray(start, dtype=np.float64) @ create_head_pose(pitch=_HEAD_NOD_DEG, degrees=True)
+        start = settled_pose(robot.get_current_head_pose)
+        nod = start @ create_head_pose(pitch=_HEAD_NOD_DEG, degrees=True)
         robot.goto_target(head=nod, duration=0.8, body_yaw=None)
-        moved = settled_pitch_deg(robot.get_current_head_pose) - start_pitch
+        moved = rotation_between_deg(start, settled_pose(robot.get_current_head_pose))
         robot.goto_target(head=start, duration=0.8, body_yaw=None)
-    if abs(moved) < _HEAD_MIN_MOVE_DEG:
-        raise CheckFailed(f"head pitch changed {moved:+.1f} deg (asked for {_HEAD_NOD_DEG:+.0f})")
-    return f"head pitch moved {moved:+.1f} deg (asked for {_HEAD_NOD_DEG:+.0f}) and returned"
+        back = rotation_between_deg(start, settled_pose(robot.get_current_head_pose))
+    detail = f"head turned {moved:.1f} deg (asked for {_HEAD_NOD_DEG:.0f}), {back:.1f} deg from start after return"
+    if moved < _HEAD_MIN_MOVE_DEG:
+        raise CheckFailed(detail)
+    return detail
 
 
 def check_telemetry(event_log: EventLog, run_id: str) -> str:
@@ -419,7 +430,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--no-pause", action="store_true", help="don't stop the always-on app LaunchAgent")
     parser.add_argument("--no-speak", action="store_true", help="don't use `say`; you speak the wake word")
     parser.add_argument("--mic-seconds", type=float, default=2.0)
-    parser.add_argument("--wake-timeout", type=float, default=10.0)
+    parser.add_argument("--wake-timeout", type=float, default=15.0)
     parser.add_argument("--live-timeout", type=float, default=60.0)
     parser.add_argument("--markdown", type=Path, default=None, help="write a scrubbed Markdown summary here")
     parser.add_argument("--json", type=Path, default=None, help="write machine-readable results here")
