@@ -168,7 +168,7 @@ def check_audio_device() -> str:
     from ambient_home.mic_check import read_firmware_version
 
     version = read_firmware_version()
-    if not version[:1].isdigit() and not version.startswith("("):
+    if not version[:1].isdigit():
         raise CheckFailed(version)
     return f"firmware {version}"
 
@@ -251,8 +251,8 @@ def check_head() -> str:
         robot.goto_target(head=start, duration=0.8, body_yaw=None)
         time.sleep(0.2)
     if abs(moved) < _HEAD_MIN_MOVE_DEG:
-        raise CheckFailed(f"head pitch changed {moved:+.1f} deg, expected about {_HEAD_NOD_DEG:+.0f}")
-    return f"head pitch moved {moved:+.1f} deg and returned"
+        raise CheckFailed(f"head pitch changed {moved:+.1f} deg (asked for {_HEAD_NOD_DEG:+.0f})")
+    return f"head pitch moved {moved:+.1f} deg (asked for {_HEAD_NOD_DEG:+.0f}) and returned"
 
 
 def check_telemetry(event_log: EventLog, run_id: str) -> str:
