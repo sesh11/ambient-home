@@ -22,6 +22,7 @@
     .danger { background: #b42318; border: 0; color: white; padding: .5rem .75rem; }
     input { max-width: 18rem; padding: .4rem; width: calc(100% - 5rem); }
     .meta { color: #666; font-size: .9rem; }
+    .issue-link { margin-left: .4rem; }
     .chart { position: relative; }
     .history { align-items: flex-end; display: flex; gap: .5rem; height: 8rem; margin-top: 1rem; }
     .history > div { border-radius: 2px; cursor: default; display: flex; flex: 1; flex-direction: column; height: 100%; justify-content: flex-end; text-align: center; }
@@ -158,6 +159,14 @@
         link.href = job.pr_url;
         link.target = "_blank";
         link.textContent = "PR";
+        pr.appendChild(link);
+      }
+      if (job.issue_url) {
+        const link = document.createElement("a");
+        link.href = job.issue_url;
+        link.target = "_blank";
+        link.className = "issue-link";
+        link.textContent = "#" + job.issue_url.split("/").pop();
         pr.appendChild(link);
       }
       row.querySelector(".question-text").textContent = job.question || job.error || "";
@@ -316,6 +325,20 @@
       const pill = row.querySelector(".pill");
       pill.className = "pill " + (incident.ready ? "ready" : "observed");
       pill.textContent = incident.ready ? "Ready for fix" : "Observed";
+      let issue = row.querySelector(".issue-link");
+      if (incident.issue_url) {
+        if (!issue) {
+          issue = document.createElement("a");
+          issue.className = "issue-link meta";
+          issue.target = "_blank";
+          issue.rel = "noopener";
+          pill.parentElement.appendChild(issue);
+        }
+        issue.href = incident.issue_url;
+        issue.textContent = "#" + incident.issue_url.split("/").pop();
+      } else if (issue) {
+        issue.remove();
+      }
     }
     function renderIncidents(report) {
       const body = document.getElementById("incidents");

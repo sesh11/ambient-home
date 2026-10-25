@@ -49,6 +49,8 @@ class Job(BaseModel):
     worker_session_id: str | None = None
     worker_url: str | None = None
     pr_url: str | None = None
+    issue_number: int | None = None
+    issue_url: str | None = None
     summary: str | None = None
     acus_consumed: float | None = None
     question: str | None = None

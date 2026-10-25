@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from ambient_home.costs import CostTracker
 from ambient_home.jobs.service import JobService
 from ambient_home.live_handler import LiveStatus
+from ambient_home.factory.report import IncidentReporter
 from ambient_home.incidents.base import Detector, parse_duration
 from ambient_home.telemetry.events import EventLog
 from ambient_home.incidents.monitor import IncidentMonitor
@@ -29,6 +30,7 @@ def create_app(
     event_log: EventLog | None = None,
     monitor: IncidentMonitor | None = None,
     detector: Detector | None = None,
+    reporter: IncidentReporter | None = None,
 ) -> FastAPI:
     """Create the loopback-only status and control application."""
     app = FastAPI(title="ambient-home")
@@ -106,7 +108,13 @@ def create_app(
         return {
             "detector": detector_name,
             "generated_at": now.isoformat(),
-            "incidents": [incident.model_dump(mode="json") for incident in found],
+            "incidents": [
+                {
+                    **incident.model_dump(mode="json"),
+                    "issue_url": reporter.issue_url(incident.fingerprint) if reporter is not None else None,
+                }
+                for incident in found
+            ],
         }
 
     @app.post("/api/stop")

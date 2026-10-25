@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 from datetime import datetime, timezone, timedelta
+from collections.abc import Callable
 
 from ambient_home.incidents.base import Detector, Incident
 from ambient_home.telemetry.events import Event, EventLog
@@ -34,7 +35,12 @@ class IncidentMonitor:
         self._seen: set[str] = set()
         self._ready: set[str] = set()
         self._listener_lock = threading.Lock()
+        self._incident_listeners: list[Callable[[list[Incident]], None]] = []
         event_log.add_listener(self._on_event)
+
+    def add_listener(self, callback: Callable[[list[Incident]], None]) -> None:
+        """Register a callback that receives every completed detection result."""
+        self._incident_listeners.append(callback)
 
     def _on_event(self, event: Event) -> None:
         if event.component == "factory" or event.type == "app.heartbeat":
@@ -59,6 +65,11 @@ class IncidentMonitor:
             try:
                 incidents = await self.detector.detect(self.event_log.read(now - self.lookback, now), now)
                 self.latest = incidents
+                for listener in self._incident_listeners:
+                    try:
+                        listener(incidents)
+                    except Exception:
+                        logger.exception("Incident listener failed")
                 for incident in incidents:
                     if incident.fingerprint not in self._seen:
                         self._seen.add(incident.fingerprint)
