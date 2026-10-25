@@ -30,7 +30,7 @@ FAIL = "fail"
 SKIP = "skip"
 
 _HEAD_NOD_DEG = 10.0
-_HEAD_MIN_MOVE_DEG = 3.0
+_HEAD_MIN_MOVE_DEG = 6.0
 
 
 @dataclass(frozen=True)
@@ -150,6 +150,25 @@ def head_pitch_deg(pose: np.ndarray) -> float:
     return float(np.degrees(np.arcsin(-np.clip(rotation[2, 0], -1.0, 1.0))))
 
 
+def settled_pitch_deg(
+    read_pose: Callable[[], np.ndarray],
+    *,
+    timeout_s: float = 1.5,
+    poll_s: float = 0.1,
+    tolerance_deg: float = 0.2,
+) -> float:
+    """Read the head pitch until two readings agree, so a lagging pose isn't measured mid-move."""
+    deadline = time.monotonic() + timeout_s
+    previous = head_pitch_deg(read_pose())
+    while time.monotonic() < deadline:
+        time.sleep(poll_s)
+        current = head_pitch_deg(read_pose())
+        if abs(current - previous) <= tolerance_deg:
+            return current
+        previous = current
+    return previous
+
+
 def check_daemon(settings: AmbientSettings) -> str:
     """Pass when the Reachy daemon reports it is running."""
 
@@ -174,13 +193,18 @@ def check_audio_device() -> str:
 
 
 def check_microphone(seconds: float) -> str:
-    """Pass when a short recording contains real sound, not all zeros."""
-    from ambient_home.mic_check import probe_microphone
+    """Pass when a short recording has real sound, rebooting the XMOS chip once if it is all zeros like the app does."""
+    from ambient_home.mic_check import probe_microphone, restart_audio_processor
 
     probe = probe_microphone(seconds)
     detail = f"verdict={probe.verdict} frames={probe.frames} peak={probe.peak:.4f}"
+    if probe.verdict == "silent" and probe.frames > 0:
+        if not restart_audio_processor():
+            raise CheckFailed(f"{detail}; audio board not found for reboot")
+        probe = probe_microphone(seconds)
+        detail = f"silent until XMOS reboot, then verdict={probe.verdict} frames={probe.frames} peak={probe.peak:.4f}"
     if probe.verdict != "ok":
-        raise CheckFailed(f"{detail}; try `uv run ambient-mic-check --reboot-xmos`")
+        raise CheckFailed(f"{detail}; check the microphone cable")
     return detail
 
 
@@ -246,10 +270,8 @@ def check_head() -> str:
         start_pitch = head_pitch_deg(start)
         nod = np.asarray(start, dtype=np.float64) @ create_head_pose(pitch=_HEAD_NOD_DEG, degrees=True)
         robot.goto_target(head=nod, duration=0.8, body_yaw=None)
-        time.sleep(0.3)
-        moved = head_pitch_deg(robot.get_current_head_pose()) - start_pitch
+        moved = settled_pitch_deg(robot.get_current_head_pose) - start_pitch
         robot.goto_target(head=start, duration=0.8, body_yaw=None)
-        time.sleep(0.2)
     if abs(moved) < _HEAD_MIN_MOVE_DEG:
         raise CheckFailed(f"head pitch changed {moved:+.1f} deg (asked for {_HEAD_NOD_DEG:+.0f})")
     return f"head pitch moved {moved:+.1f} deg (asked for {_HEAD_NOD_DEG:+.0f}) and returned"

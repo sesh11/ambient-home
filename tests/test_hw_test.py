@@ -151,3 +151,40 @@ def test_main_writes_reports_and_returns_exit_code(tmp_path: Path, monkeypatch: 
     events = EventLog(tmp_path / "events").read(datetime(2000, 1, 1, tzinfo=timezone.utc))
     assert [e.type for e in events] == ["hw_test.check", "hw_test.check", "hw_test.completed"]
     assert events[-1].data["ok"] is False
+
+
+def test_settled_pitch_waits_for_pose_to_stop_moving(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hw_test.time, "sleep", lambda seconds: None)
+    pitches = iter([2.0, 6.0, 9.0, 9.9, 10.0, 10.0])
+
+    assert hw_test.settled_pitch_deg(lambda: create_head_pose(pitch=next(pitches), degrees=True)) == pytest.approx(9.9)
+
+
+def _mic_probe(verdict: str, frames: int = 100) -> object:
+    from ambient_home.mic_check import MicProbe
+
+    return MicProbe(
+        frames=frames, samples=frames * 160, rms=0.0, peak=0.01 if verdict == "ok" else 0.0, verdict=verdict
+    )
+
+
+def test_check_microphone_reboots_xmos_once_when_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ambient_home import mic_check
+
+    probes = iter([_mic_probe("silent"), _mic_probe("ok")])
+    reboots: list[bool] = []
+    monkeypatch.setattr(mic_check, "probe_microphone", lambda seconds: next(probes))
+    monkeypatch.setattr(mic_check, "restart_audio_processor", lambda: reboots.append(True) or True)
+
+    assert "silent until XMOS reboot" in hw_test.check_microphone(1.0)
+    assert reboots == [True]
+
+
+def test_check_microphone_fails_when_still_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ambient_home import mic_check
+
+    monkeypatch.setattr(mic_check, "probe_microphone", lambda seconds: _mic_probe("silent"))
+    monkeypatch.setattr(mic_check, "restart_audio_processor", lambda: True)
+
+    with pytest.raises(CheckFailed, match="cable"):
+        hw_test.check_microphone(1.0)
