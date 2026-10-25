@@ -171,6 +171,25 @@ restart `Microphone check: ok` (or `Microphone recovered after audio processor
 restart`), `Reachy daemon ready`, and the asleep heartbeat. Reachy should be
 listening for the wake word within about 30 s of the replug.
 
+## Hardware test
+
+`uv run ambient-hw-test` checks the real robot in under two minutes and exits
+0 (pass) or 1 (fail). It pauses only the always-on app agent
+(`ai.ambient-home.app`; the daemon keeps running) and always starts it again
+at the end. Checks: telemetry write/read, daemon running, audio board
+firmware, microphone gives real sound, wake word fires (it plays the wake
+phrase with `say`), and a small head nod read back from the pose.
+
+By default the wake check uses only the local detector, so no paid OpenAI
+Live session opens and nothing can dispatch a Devin job. Useful flags:
+
+```bash
+uv run ambient-hw-test --live                 # also open one Live session (costs money)
+uv run ambient-hw-test --no-speak             # say the wake word yourself
+uv run ambient-hw-test --no-pause             # app agent already stopped
+uv run ambient-hw-test --markdown hw.md --json hw.json   # scrubbed reports for a PR
+```
+
 ## Costs
 
 The dashboard charts daily usage over the last `AMBIENT_COST_HISTORY_DAYS`
