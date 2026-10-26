@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from dataclasses import field, dataclass
 
+from ambient_home.incidents.base import parse_duration
+
 
 @dataclass(frozen=True)
 class AmbientSettings:
@@ -47,6 +49,19 @@ class AmbientSettings:
     github_token: str | None = None
     factory_repo: str = "sesh11/ambient-home"
     factory_max_new_issues_per_day: int = 5
+    factory_dispatch: bool = False
+    factory_dispatch_interval_s: float = 3600.0
+    factory_outpost: str = "my-mac"
+
+
+def _duration_env(name: str, default_s: float) -> float:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default_s
+    try:
+        return parse_duration(value.strip()).total_seconds()
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a duration such as 30m, 1h or 6h") from exc
 
 
 def _float_env(name: str, default: float) -> float:
@@ -125,4 +140,7 @@ def settings_from_env() -> AmbientSettings:
         github_token=os.getenv("AMBIENT_GITHUB_TOKEN") or None,
         factory_repo=os.getenv("AMBIENT_FACTORY_REPO") or "sesh11/ambient-home",
         factory_max_new_issues_per_day=_int_env("AMBIENT_FACTORY_MAX_NEW_ISSUES_PER_DAY", 5),
+        factory_dispatch=_bool_env("AMBIENT_FACTORY_DISPATCH", False),
+        factory_dispatch_interval_s=_duration_env("AMBIENT_FACTORY_DISPATCH_INTERVAL", 3600.0),
+        factory_outpost=os.getenv("AMBIENT_FACTORY_OUTPOST") or "my-mac",
     )

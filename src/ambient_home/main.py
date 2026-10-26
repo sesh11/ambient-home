@@ -27,7 +27,7 @@ from ambient_home.telemetry import EventLog, emit, configure
 from ambient_home.wake_word import OpenWakeWordDetector
 from ambient_home.jobs.board import JobBoard
 from ambient_home.jobs.devin import NullWorker, DevinWorker
-from ambient_home.factory.cli import build_reporters
+from ambient_home.factory.cli import build_reporters, build_dispatcher
 from ambient_home.jobs.worker import Worker
 from ambient_home.jobs.service import JobService
 from ambient_home.live_handler import LiveStatus
@@ -227,6 +227,9 @@ def main() -> None:
     )
     if reporter is not None:
         background_factories.append(reporter.run)
+    dispatcher = build_dispatcher(settings)
+    if dispatcher is not None:
+        background_factories.append(dispatcher.run)
     emit(
         "app.started",
         "app",
