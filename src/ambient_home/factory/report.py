@@ -24,12 +24,14 @@ REQUEST = "factory:request"
 OBSERVED = "factory:observed"
 READY = "factory:ready-for-fix"
 FIXING = "factory:fixing"
+DISPATCHED = "factory:dispatched"
 LABELS: dict[str, tuple[str, str]] = {
     INCIDENT: ("5319e7", "Filed automatically from an incident the app detected"),
     REQUEST: ("1d76db", "Fix or feature asked for by voice through Alfred"),
     OBSERVED: ("fbca04", "Seen, but below the threshold for a fix"),
     READY: ("d93f0b", "Ready for a Devin fix session"),
     FIXING: ("0e8a16", "A Devin session is working on it"),
+    DISPATCHED: ("c5def5", "A Devin fix session was started; remove to allow another"),
 }
 MAX_SAMPLES = 10
 

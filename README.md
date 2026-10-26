@@ -80,6 +80,9 @@ same probe standalone.
 | `AMBIENT_GITHUB_TOKEN` | unset | Fine-grained token for the factory repo with only Issues: read and write |
 | `AMBIENT_FACTORY_REPO` | `sesh11/ambient-home` | Repository that receives factory issues |
 | `AMBIENT_FACTORY_MAX_NEW_ISSUES_PER_DAY` | `5` | Daily cap on new issues, per kind |
+| `AMBIENT_FACTORY_DISPATCH` | `false` | Start a cloud Devin fix session for each `factory:ready-for-fix` issue |
+| `AMBIENT_FACTORY_DISPATCH_INTERVAL` | `1h` | How often to look for ready issues (`30m`, `1h`, `6h`, ...) |
+| `AMBIENT_FACTORY_OUTPOST` | `my-mac` | Mac outpost pool a fix session uses only for the robot test |
 
 Set `AMBIENT_WAKE_WORD=hey_alfred` to use the bundled custom wake-word model.
 
@@ -152,6 +155,36 @@ uv run ambient-report --since 7d              # posts it
 ```
 
 To ask for a fix sooner, add the `factory:ready-for-fix` label to the issue by hand.
+
+## Factory dispatch (fix sessions)
+
+With `AMBIENT_FACTORY_DISPATCH=true`, plus `AMBIENT_GITHUB_TOKEN`, `DEVIN_API_KEY`
+and `DEVIN_ORG_ID`, the app checks GitHub every
+`AMBIENT_FACTORY_DISPATCH_INTERVAL` (default one hour) for open issues labeled
+`factory:ready-for-fix` and starts one Devin session per issue to fix it:
+
+- The fix session runs in the Devin cloud. Only if the change needs the robot
+  does it start a short child session on the Mac outpost
+  (`AMBIENT_FACTORY_OUTPOST`), which runs `uv run ambient-hw-test --markdown`
+  (never `--live`) from a separate git worktree and sends back the report for
+  the PR. The always-on app's checkout is never switched.
+- The session gets only the scrubbed issue title and body (no comments), opens
+  one PR with `Closes #N`, and never merges.
+- Voice-request issues (`factory:request`) are skipped: they already have a
+  session.
+- Never twice: the session is saved to `factory_dispatch.json` in the data
+  directory before the issue gets `factory:dispatched` + `factory:fixing` and a
+  comment linking the session. When the session ends, a second comment gives the
+  PR link (or what went wrong) and `factory:fixing` is removed. To try again,
+  remove `factory:dispatched` by hand.
+- Each session is capped at `AMBIENT_DEVIN_MAX_ACU`.
+
+Preview or run one pass:
+
+```bash
+uv run ambient-dispatch --dry-run --show-prompt   # prints what it would start; changes nothing
+uv run ambient-dispatch                           # starts the sessions
+```
 
 ## Run as a service (macOS)
 
