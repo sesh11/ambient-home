@@ -154,6 +154,8 @@ uv run ambient-report --dry-run --since 7d    # prints what it would post for in
 uv run ambient-report --since 7d              # posts it
 ```
 
+To ask for a fix sooner, add the `factory:ready-for-fix` label to the issue by hand.
+
 ## Factory dispatch (fix sessions)
 
 With `AMBIENT_FACTORY_DISPATCH=true`, plus `AMBIENT_GITHUB_TOKEN`, `DEVIN_API_KEY`
