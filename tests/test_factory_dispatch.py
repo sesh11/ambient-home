@@ -172,6 +172,27 @@ async def test_finished_session_reports_pr_and_drops_fixing(tmp_path) -> None:
     assert DispatchLedger.load(tmp_path / "ledger.json").records[0].done
 
 
+async def test_session_waiting_after_reporting_counts_as_finished(tmp_path) -> None:
+    github, devin = FakeGitHub(), FakeDevin()
+    github.add(10, [INCIDENT, READY])
+    run = dispatcher(github, devin, tmp_path)
+    await run.poll_once()
+    devin.states["s1"] = SessionState(session_id="s1", status="running", status_detail="waiting_for_user")
+    assert await run.poll_once() == []
+    devin.states["s1"] = SessionState(
+        session_id="s1",
+        status="running",
+        status_detail="waiting_for_user",
+        structured_output={"summary": "Done.", "pr_url": "https://github.com/sesh11/ambient-home/pull/41"},
+    )
+
+    actions = await run.poll_once()
+
+    assert actions == ["session for #10 ended (finished)"]
+    assert FIXING not in github.issues[10].labels
+    assert "pull/41" in github.comments[-1][1]
+
+
 async def test_dry_run_changes_nothing(tmp_path) -> None:
     github, devin = FakeGitHub(), FakeDevin()
     github.add(9, [INCIDENT, READY])

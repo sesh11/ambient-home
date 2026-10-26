@@ -130,6 +130,11 @@ def build_fix_prompt(issue: IssueRecord, repo: str, outpost: str) -> str:
     )
 
 
+def _has_summary(output: dict[str, object]) -> bool:
+    summary = output.get("summary")
+    return isinstance(summary, str) and bool(summary.strip())
+
+
 class Dispatcher:
     """Poll for ready issues and start one cloud Devin fix session for each."""
 
@@ -238,9 +243,12 @@ class Dispatcher:
                 logger.warning("Could not refresh fix session %s: %s", record.session_id, exc)
                 continue
             status = DevinWorker.map_status(session.status.lower(), (session.status_detail or "").lower())
+            output = session.structured_output or {}
+            if status is JobStatus.blocked and _has_summary(output):
+                # Devin sessions usually wait for the user after reporting their result rather than exiting.
+                status = JobStatus.finished
             if status not in _DONE:
                 continue
-            output = session.structured_output or {}
             pr_url = output.get("pr_url")
             if not isinstance(pr_url, str) or not pr_url:
                 pr_url = session.pull_requests[-1].pr_url if session.pull_requests else None
