@@ -5,15 +5,18 @@ import asyncio
 import logging
 import argparse
 from datetime import datetime, timezone, timedelta
+from dataclasses import replace
 from collections.abc import Sequence
 
 from dotenv import load_dotenv
 
 from ambient_home.config import AmbientSettings, settings_from_env
 from ambient_home.telemetry import EventLog
+from ambient_home.jobs.devin import DevinWorker
 from ambient_home.factory.github import GitHubIssues
-from ambient_home.factory.report import RequestLogger, IncidentReporter
+from ambient_home.factory.report import READY, RequestLogger, IncidentReporter
 from ambient_home.incidents.base import Detector, Incident, parse_duration
+from ambient_home.factory.dispatch import Dispatcher, build_fix_prompt
 from ambient_home.telemetry.events import Event
 from ambient_home.incidents.registry import build_detector
 
@@ -31,6 +34,37 @@ def build_reporters(settings: AmbientSettings) -> tuple[IncidentReporter | None,
     issues = GitHubIssues(settings.factory_repo, settings.github_token)
     cap = settings.factory_max_new_issues_per_day
     return IncidentReporter(issues, max_new_per_day=cap), RequestLogger(issues, max_per_day=cap)
+
+
+def build_dispatcher(settings: AmbientSettings, *, dry_run: bool = False) -> Dispatcher | None:
+    """Return the fix-session dispatcher, or None when dispatch is off or not configured."""
+    if not settings.factory_dispatch and not dry_run:
+        return None
+    missing = [
+        name
+        for name, value in (
+            ("AMBIENT_GITHUB_TOKEN", settings.github_token),
+            ("DEVIN_API_KEY", settings.devin_api_key),
+            ("DEVIN_ORG_ID", settings.devin_org_id),
+        )
+        if not value
+    ]
+    if missing and not dry_run:
+        logger.warning("AMBIENT_FACTORY_DISPATCH is on but %s is not set; not dispatching.", ", ".join(missing))
+        return None
+    return Dispatcher(
+        GitHubIssues(settings.factory_repo, settings.github_token),
+        DevinWorker(
+            settings.devin_api_key or "",
+            settings.devin_org_id or "",
+            base_url=settings.devin_api_base_url,
+            max_acu=settings.devin_max_acu,
+        ),
+        settings.data_dir / "factory_dispatch.json",
+        outpost=settings.factory_outpost,
+        interval_s=settings.factory_dispatch_interval_s,
+        dry_run=dry_run,
+    )
 
 
 async def detect_over(detector: Detector, events: Sequence[Event], start: datetime, now: datetime) -> list[Incident]:
@@ -92,6 +126,45 @@ def main(argv: list[str] | None = None) -> int:
     if not actions:
         print(f"{prefix}nothing to post for {settings.factory_repo}")
     return 0
+
+
+async def _dispatch_once(dispatcher: Dispatcher, show_prompt: bool) -> list[str]:
+    if show_prompt:
+        for issue in await dispatcher.issues.list_issues(READY):
+            if issue.state == "open":
+                print(f"----- prompt for #{issue.number} -----")
+                print(build_fix_prompt(issue, dispatcher.issues.repo, dispatcher.outpost))
+    return await dispatcher.poll_once()
+
+
+def dispatch_main(argv: list[str] | None = None) -> int:
+    """Run one dispatch pass: start a cloud Devin fix session for each ready issue (factory step 4)."""
+    parser = argparse.ArgumentParser(description="Start Devin fix sessions for ready GitHub issues (factory step 4).")
+    parser.add_argument("--dry-run", action="store_true", help="print what would be started; change nothing")
+    parser.add_argument("--show-prompt", action="store_true", help="also print the prompt each session would get")
+    args = parser.parse_args(argv)
+    load_dotenv()
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    settings = settings_from_env()
+    dispatcher = build_dispatcher(settings, dry_run=True) if args.dry_run else _forced_dispatcher(settings)
+    if dispatcher is None:
+        print("needs AMBIENT_GITHUB_TOKEN, DEVIN_API_KEY and DEVIN_ORG_ID in .env (or use --dry-run)", file=sys.stderr)
+        return 2
+    try:
+        actions = asyncio.run(_dispatch_once(dispatcher, args.show_prompt))
+    except Exception as exc:
+        print(f"dispatch failed: {exc}", file=sys.stderr)
+        return 1
+    prefix = "[dry run] " if args.dry_run else ""
+    for action in actions:
+        print(f"{prefix}{action}")
+    if not actions:
+        print(f"{prefix}nothing to dispatch for {settings.factory_repo}")
+    return 0
+
+
+def _forced_dispatcher(settings: AmbientSettings) -> Dispatcher | None:
+    return build_dispatcher(replace(settings, factory_dispatch=True))
 
 
 if __name__ == "__main__":

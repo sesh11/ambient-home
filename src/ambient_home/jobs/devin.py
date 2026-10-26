@@ -12,7 +12,9 @@ from ambient_home.jobs.board import Job, JobStatus
 logger = logging.getLogger(__name__)
 
 
-class _CreateSessionResponse(BaseModel):
+class CreatedSession(BaseModel):
+    """What the Devin API returns when a session is created."""
+
     model_config = ConfigDict(extra="ignore")
 
     session_id: str
@@ -42,7 +44,9 @@ class _MessagesResponse(BaseModel):
     end_cursor: str | None = None
 
 
-class _SessionResponse(BaseModel):
+class SessionState(BaseModel):
+    """A Devin session's current status and structured output."""
+
     model_config = ConfigDict(extra="ignore")
 
     session_id: str
@@ -51,6 +55,18 @@ class _SessionResponse(BaseModel):
     pull_requests: list[_PullRequest] = Field(default_factory=list)
     structured_output: dict[str, object] | None = None
     acus_consumed: float | None = None
+
+
+JOB_OUTPUT_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "risk": {"type": "string", "enum": ["low", "medium", "high"]},
+        "pr_url": {"type": ["string", "null"]},
+        "ci_state": {"type": "string"},
+    },
+    "required": ["summary", "risk", "pr_url", "ci_state"],
+}
 
 
 def build_prompt(job: Job) -> str:
@@ -117,32 +133,50 @@ class DevinWorker:
     def _sessions_path(self) -> str:
         return f"/v3/organizations/{self.org_id}/sessions"
 
+    async def create_session(
+        self,
+        prompt: str,
+        *,
+        title: str,
+        tags: list[str],
+        structured_output_schema: dict[str, object],
+        repos: list[str] | None = None,
+        platform: str | None = None,
+    ) -> CreatedSession:
+        """Start a Devin session; raises on HTTP errors. ``platform`` names an outpost pool, default cloud."""
+        payload: dict[str, object] = {
+            "prompt": prompt,
+            "title": title,
+            "tags": tags,
+            "max_acu_limit": self.max_acu,
+            "structured_output_schema": structured_output_schema,
+        }
+        if repos:
+            payload["repos"] = repos
+        if platform:
+            payload["platform"] = platform
+        response = await self._request("POST", self._sessions_path(), payload)
+        response.raise_for_status()
+        return CreatedSession.model_validate(response.json())
+
+    async def get_session(self, session_id: str) -> SessionState:
+        """Fetch a session's current state; raises on HTTP errors."""
+        response = await self._request("GET", f"{self._sessions_path()}/{session_id}")
+        response.raise_for_status()
+        return SessionState.model_validate(response.json())
+
     async def start(self, job: Job) -> Job:
         """Create a Devin session for a queued job."""
-        payload: dict[str, object] = {
-            "prompt": build_prompt(job),
-            "title": job.request[:80],
-            "tags": ["voice", "office"],
-            "max_acu_limit": self.max_acu,
-            "structured_output_schema": {
-                "type": "object",
-                "properties": {
-                    "summary": {"type": "string"},
-                    "risk": {"type": "string", "enum": ["low", "medium", "high"]},
-                    "pr_url": {"type": ["string", "null"]},
-                    "ci_state": {"type": "string"},
-                },
-                "required": ["summary", "risk", "pr_url", "ci_state"],
-            },
-        }
-        if job.repository:
-            payload["repos"] = [job.repository]
         try:
-            response = await self._request("POST", self._sessions_path(), payload)
-            response.raise_for_status()
-            created = _CreateSessionResponse.model_validate(response.json())
+            created = await self.create_session(
+                build_prompt(job),
+                title=job.request[:80],
+                tags=["voice", "office"],
+                structured_output_schema=JOB_OUTPUT_SCHEMA,
+                repos=[job.repository] if job.repository else None,
+            )
         except Exception as exc:
-            detail = self._error_detail(exc)
+            detail = self.error_detail(exc)
             logger.error("Could not start Devin job %s: %s", job.id, detail)
             emit("devin.request_failed", "jobs", "error", op="start", job_id=job.id, error=detail)
             job.status = JobStatus.failed
@@ -159,9 +193,7 @@ class DevinWorker:
         if not job.worker_session_id:
             return job
         try:
-            response = await self._request("GET", f"{self._sessions_path()}/{job.worker_session_id}")
-            response.raise_for_status()
-            session = _SessionResponse.model_validate(response.json())
+            session = await self.get_session(job.worker_session_id)
         except Exception as exc:
             logger.warning("Could not refresh Devin job %s: %s", job.id, exc)
             emit("devin.request_failed", "jobs", "warning", op="refresh", job_id=job.id, error=str(exc))
@@ -171,7 +203,7 @@ class DevinWorker:
             job.acus_consumed = session.acus_consumed
         status = session.status.lower()
         status_detail = (session.status_detail or "").lower()
-        mapped_status = self._map_status(status, status_detail)
+        mapped_status = self.map_status(status, status_detail)
         if mapped_status is not None:
             job.status = mapped_status
         if status == "error":
@@ -222,7 +254,8 @@ class DevinWorker:
         job.question = None
 
     @staticmethod
-    def _map_status(status: str, status_detail: str) -> JobStatus | None:
+    def map_status(status: str, status_detail: str) -> JobStatus | None:
+        """Translate a Devin session status into a job status (None while still working)."""
         if status in {"new", "claimed", "running", "resuming"}:
             if status_detail in {"waiting_for_user", "waiting_for_approval"}:
                 return JobStatus.blocked
@@ -242,7 +275,8 @@ class DevinWorker:
         return None
 
     @staticmethod
-    def _error_detail(error: Exception) -> str:
+    def error_detail(error: Exception) -> str:
+        """Short, log-safe description of a failed Devin API call."""
         if isinstance(error, httpx.HTTPStatusError):
             response = error.response
             return f"HTTP {response.status_code}: {response.text[:500]}"
