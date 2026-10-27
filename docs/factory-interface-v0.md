@@ -42,6 +42,56 @@ Intake has two streams that meet in one inbox:
 - **asks**: feature requests, enhancements and bug reports from people (voice, GitHub issues,
   "report a problem").
 
+### Conceptual diagram
+
+Blue boxes are the factory service, purple boxes are plug-ins, and yellow hexagons are the
+points where a human must approve. The numbers on the arrows are the contracts in section 2.
+
+```mermaid
+flowchart TB
+    subgraph APP["Any app: its repo and its running installs"]
+        direction LR
+        MAN["factory.toml +<br/>product brief"]
+        PEOPLE["People<br/>voice, GitHub issues,<br/>report a problem"]
+        RUN["Running installs<br/>factory-sdk writes events"]
+    end
+
+    INBOX["Intake inbox<br/>incidents + asks"]
+    PM["PM step<br/>understand, group, check fit,<br/>size up, recommend, plan"]
+    H1{{"Human approves<br/>triage + plan"}}
+    WO["Work order"]
+    AG["Coding agents (plug-ins)<br/>Devin, Codex, ..."]
+    TEST["Test runners (plug-ins)<br/>cloud checks, outpost with real hardware"]
+    PROOF["Check proof"]
+    H2{{"Human approves<br/>release"}}
+    REL["Release"]
+    CONF["Confirm on the new version"]
+    DONE(["Closed: confirmed fixed"])
+
+    PEOPLE -- "asks" --> INBOX
+    RUN -- "1 signals" --> INBOX
+    MAN -. "2 manifest: rules, test kits, policy" .-> PM
+    INBOX --> PM
+    PM -- "3 triage decision + plan" --> H1
+    H1 --> WO
+    WO -- "4 work order" --> AG
+    AG -- "pull request + 5a agent result" --> TEST
+    TEST -- "5b test report" --> PROOF
+    PROOF --> H2
+    H2 --> REL
+    REL -- "new version" --> RUN
+    RUN -- "5c events from new version" --> CONF
+    CONF -- "held" --> DONE
+    CONF -- "came back: reopen" --> INBOX
+
+    classDef factory fill:#e8f4fd,stroke:#2b7bb9,color:#0b3a5c
+    classDef human fill:#fff4d6,stroke:#c98a00,color:#5c3d00
+    classDef plugin fill:#f1ecfb,stroke:#7a5bbf,color:#33205e
+    class INBOX,PM,WO,PROOF,CONF factory
+    class H1,H2 human
+    class AG,TEST plugin
+```
+
 Some vendors cover parts of this (checked 2026-10, from their public docs):
 - Sentry Seer Autofix can go from a Sentry issue to a drafted PR.
 - Datadog Bits Code turns Datadog signals into fix PRs.
