@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -11,6 +11,10 @@ resolution-markers = [
 ]
 
 [manifest]
+members = [
+    "ambient-device-sdk",
+    "ambient-home",
+]
 overrides = [{ name = "openai", specifier = ">=3.12.0,<4" }]
 
 [[package]]
@@ -154,6 +158,10 @@ wheels = [
 ]
 
 [[package]]
+name = "ambient-device-sdk"
+source = { editable = "packages/ambient-device-sdk" }
+
+[[package]]
 name = "ambient-home"
 version = "0.1.0"
 source = { editable = "." }
@@ -173,6 +181,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "ambient-device-sdk" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -196,6 +205,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "ambient-device-sdk", editable = "packages/ambient-device-sdk" },
     { name = "mypy", specifier = "==2.2.0" },
     { name = "pre-commit" },
     { name = "pytest" },
