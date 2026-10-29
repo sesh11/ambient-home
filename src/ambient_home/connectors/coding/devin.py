@@ -4,8 +4,8 @@ import logging
 
 import httpx
 from pydantic import Field, BaseModel, ConfigDict
+from garage_sdk import emit
 
-from ambient_home.telemetry import emit
 from ambient_home.jobs.board import Job, JobStatus
 
 

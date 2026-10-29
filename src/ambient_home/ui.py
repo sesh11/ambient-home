@@ -1,20 +1,34 @@
 """Small local status and control UI."""
 
+import re
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections.abc import Callable, Awaitable
 
 from fastapi import FastAPI
 from pydantic import BaseModel
+from garage_sdk import EventLog
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from ambient_home.costs import CostTracker
+from ambient_home.conversation import LiveStatus
 from ambient_home.jobs.service import JobService
-from ambient_home.live_handler import LiveStatus
-from ambient_home.factory.report import IncidentReporter
-from ambient_home.incidents.base import Detector, parse_duration
-from ambient_home.telemetry.events import EventLog
-from ambient_home.incidents.monitor import IncidentMonitor
+
+
+def parse_since(value: str) -> timedelta:
+    """Parse integer seconds, minutes, hours, or days."""
+    match = re.fullmatch(r"(\d+)([smhd])", value)
+    if match is None:
+        raise ValueError(f"invalid duration {value!r}; expected values such as 90s, 10m, 6h, or 1d")
+    amount = int(match.group(1))
+    unit = match.group(2)
+    if unit == "s":
+        return timedelta(seconds=amount)
+    if unit == "m":
+        return timedelta(minutes=amount)
+    if unit == "h":
+        return timedelta(hours=amount)
+    return timedelta(days=amount)
 
 
 class _AnswerRequest(BaseModel):
@@ -28,15 +42,11 @@ def create_app(
     cost_tracker: CostTracker,
     *,
     event_log: EventLog | None = None,
-    monitor: IncidentMonitor | None = None,
-    detector: Detector | None = None,
-    reporter: IncidentReporter | None = None,
+    devices: Callable[[], list[dict[str, object]]] | None = None,
 ) -> FastAPI:
     """Create the loopback-only status and control application."""
     app = FastAPI(title="ambient-home")
     app.state.event_log = event_log
-    app.state.monitor = monitor
-    app.state.detector = detector
     index_path = Path(__file__).parent / "ui" / "index.html"
 
     @app.get("/")
@@ -51,10 +61,6 @@ def create_app(
     async def costs_page() -> FileResponse:
         return FileResponse(index_path)
 
-    @app.get("/incidents")
-    async def incidents_page() -> FileResponse:
-        return FileResponse(index_path)
-
     @app.get("/api/status")
     async def status() -> dict[str, object]:
         live = status_provider()
@@ -67,7 +73,12 @@ def create_app(
                 "last_close_reason": live.last_close_reason.value if live.last_close_reason else None,
             },
             "jobs": job_service.status_summary(),
+            "devices": devices() if devices is not None else [],
         }
+
+    @app.get("/api/devices")
+    async def devices_status() -> list[dict[str, object]]:
+        return devices() if devices is not None else []
 
     @app.get("/api/costs")
     async def costs() -> dict[str, object]:
@@ -79,7 +90,7 @@ def create_app(
     ) -> dict[str, object] | JSONResponse:
         now = datetime.now(timezone.utc)
         try:
-            start = now - parse_duration(since)
+            start = now - parse_since(since)
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"error": str(exc)})
         if event_log is None:
@@ -92,29 +103,6 @@ def create_app(
             "since": start.isoformat(),
             "count": len(matched),
             "events": [event.model_dump(mode="json") for event in matched],
-        }
-
-    @app.get("/api/incidents", response_model=None)
-    async def incidents(since: str = "24h") -> dict[str, object] | JSONResponse:
-        now = datetime.now(timezone.utc)
-        try:
-            start = now - parse_duration(since)
-        except ValueError as exc:
-            return JSONResponse(status_code=400, content={"error": str(exc)})
-        detector_name = detector.name if detector is not None else None
-        found = []
-        if event_log is not None and detector is not None:
-            found = await detector.detect(event_log.read(start, now), now)
-        return {
-            "detector": detector_name,
-            "generated_at": now.isoformat(),
-            "incidents": [
-                {
-                    **incident.model_dump(mode="json"),
-                    "issue_url": reporter.issue_url(incident.fingerprint) if reporter is not None else None,
-                }
-                for incident in found
-            ],
         }
 
     @app.post("/api/stop")

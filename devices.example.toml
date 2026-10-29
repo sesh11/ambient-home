@@ -1,0 +1,6 @@
+# Copy this file to ~/.ambient-home/devices.toml and install the connector.
+# [[device]]
+# id = "reachy-desk"
+# kind = "reachy-mini-lite"
+# enabled = true
+# [device.config]

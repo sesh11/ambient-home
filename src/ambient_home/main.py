@@ -4,83 +4,98 @@ import os
 import time
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from collections.abc import Callable, Awaitable
+from datetime import datetime
+from dataclasses import dataclass
 
 import uvicorn
 from dotenv import load_dotenv
+from fastapi import FastAPI
+from garage_sdk import EventLog, Resource, EventLoggingHandler, emit, configure
+from garage_sdk.resource import install_id, version_stamp
 
+from ambient_home import __version__
 from ambient_home.ui import create_app
 from ambient_home.costs import CostRates, CostTracker
-from ambient_home.config import settings_from_env
-from ambient_home.daemon import (
-    DAEMON_LOST_EXIT_CODE,
-    DAEMON_UNAVAILABLE_EXIT_CODE,
-    exit_process,
-    watch_daemon,
-    wait_for_daemon,
-)
-from ambient_home.runtime import set_settings, set_job_service, set_cost_tracker
-from ambient_home.mic_check import ensure_microphone_audio
+from ambient_home.config import AmbientSettings, settings_from_env
+from ambient_home.gateway import DeviceGateway, load_device_configs
+from ambient_home.persona import load_profile
 from ambient_home.spend_log import SpendLog
-from ambient_home.telemetry import EventLog, emit, configure
 from ambient_home.wake_word import OpenWakeWordDetector
 from ambient_home.jobs.board import JobBoard
-from ambient_home.jobs.devin import NullWorker, DevinWorker
-from ambient_home.factory.cli import build_reporters, build_dispatcher
-from ambient_home.jobs.worker import Worker
+from ambient_home.tools.core import build_core_tools
+from ambient_home.conversation import Conversation
 from ambient_home.jobs.service import JobService
-from ambient_home.live_handler import LiveStatus
-from ambient_home.session_gate import GateState, CloseReason, SessionGate
-from ambient_home.incidents.monitor import IncidentMonitor
-from ambient_home.incidents.registry import build_detector
-from ambient_home.telemetry.logging_bridge import EventLoggingHandler
+from ambient_home.session_gate import CloseReason, SessionGate
+from ambient_home.connectors.coding.devin import NullWorker, DevinWorker
+from ambient_home.connectors.coding.worker import Worker
+from ambient_home.connectors.garage_requests import HttpRequestLog
+from ambient_home.connectors.voice.openai_live import OpenAILiveVoiceModel
+from ambient_home.connectors.vision.openai_vision import OpenAIVision
 
 
 logger = logging.getLogger(__name__)
 
 
-def main() -> None:
-    """Start ambient-home and keep wake-word listening active."""
-    load_dotenv()
-    log_level = logging.getLevelNamesMapping().get(os.getenv("AMBIENT_LOG_LEVEL", "INFO").upper(), logging.INFO)
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+@dataclass
+class App:
+    """Configured ambient-home services."""
 
-    from reachy_mini import ReachyMini
-    from reachy_mini_conversation_app.moves import MovementManager
-    from reachy_mini_conversation_app.config import config as reachy_config
-    from reachy_mini_conversation_app.console import LocalStream
-    from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, initialize_tools
+    ui: FastAPI
+    gateway: DeviceGateway
+    conversation: Conversation
+    job_service: JobService
+    settings: AmbientSettings
 
-    from ambient_home.live_handler import GPTLiveHandler
+    async def run(self) -> None:
+        """Run the UI, device gateway, conversation, poller and heartbeat."""
+        server = uvicorn.Server(
+            uvicorn.Config(self.ui, host=self.settings.ui_host, port=self.settings.ui_port, log_level="warning")
+        )
 
-    settings = settings_from_env()
-    event_log = EventLog(settings.events_dir, retention_days=settings.event_retention_days)
+        async def heartbeat() -> None:
+            started_at = time.monotonic()
+            while True:
+                await asyncio.sleep(self.settings.heartbeat_s)
+                emit(
+                    "app.heartbeat",
+                    "app",
+                    state=self.conversation.status().state.value,
+                    uptime_s=time.monotonic() - started_at,
+                )
+
+        try:
+            await asyncio.gather(
+                server.serve(),
+                self.job_service.run_poller(self.settings.job_poll_s),
+                heartbeat(),
+                self.gateway.run(),
+                self.conversation.run(),
+            )
+        finally:
+            await self.conversation.shutdown()
+            await self.gateway.stop()
+            configure(None)
+
+
+def build_app(settings: AmbientSettings) -> App:
+    """Compose the hub without opening providers, loading wake models, or requiring devices."""
+    resource = None
+    if settings.event_resource:
+        resource = Resource(
+            app="ambient-home",
+            version=version_stamp(__version__, None),
+            install=install_id(settings.data_dir / "install_id"),
+        )
+    event_log = EventLog(settings.events_dir, retention_days=settings.event_retention_days, resource=resource)
     configure(event_log)
     event_log.prune()
-    logging.getLogger().addHandler(EventLoggingHandler())
-    detector = build_detector(settings)
-    monitor = IncidentMonitor(
-        detector,
-        event_log,
-        lookback=timedelta(seconds=settings.incident_lookback_s),
-    )
-    reporter, request_logger = build_reporters(settings)
-    if reporter is not None:
-        monitor.add_listener(reporter.notify)
-    set_settings(settings)
-    current_handler: GPTLiveHandler | None = None
-    background_factories: list[Callable[[], Awaitable[None]]] = []
+    root_logger = logging.getLogger()
+    if not any(isinstance(handler, EventLoggingHandler) for handler in root_logger.handlers):
+        root_logger.addHandler(EventLoggingHandler())
 
-    async def announce(text: str) -> None:
-        if current_handler is not None:
-            await current_handler.announce(text)
-
+    worker: Worker
     if settings.devin_api_key and settings.devin_org_id:
-        worker: Worker = DevinWorker(
+        worker = DevinWorker(
             settings.devin_api_key,
             settings.devin_org_id,
             base_url=settings.devin_api_base_url,
@@ -89,15 +104,13 @@ def main() -> None:
     else:
         missing = [
             name
-            for name, value in (
-                ("DEVIN_API_KEY", settings.devin_api_key),
-                ("DEVIN_ORG_ID", settings.devin_org_id),
-            )
+            for name, value in (("DEVIN_API_KEY", settings.devin_api_key), ("DEVIN_ORG_ID", settings.devin_org_id))
             if not value
         ]
         message = f"{', '.join(missing)} is not configured; dispatched jobs will fail clearly."
         logger.warning(message)
         worker = NullWorker(error=message)
+
     board = JobBoard(settings.data_dir / "jobs.json")
     spend_log = SpendLog(settings.data_dir / "spend.jsonl")
     gate = SessionGate(
@@ -106,130 +119,58 @@ def main() -> None:
         daily_budget_s=settings.daily_budget_s,
         seconds_used_today=spend_log.seconds_today(datetime.now().astimezone()),
     )
-    cost_tracker = CostTracker(
+    costs = CostTracker(
         spend_log,
         board,
-        rates=CostRates(
-            live_usd_per_minute=settings.live_usd_per_minute,
-            acu_usd=settings.acu_usd,
-        ),
+        rates=CostRates(live_usd_per_minute=settings.live_usd_per_minute, acu_usd=settings.acu_usd),
         history_days=settings.cost_history_days,
         live_session_seconds=lambda: gate.session_elapsed_s,
     )
-    set_cost_tracker(cost_tracker)
-    job_service = JobService(board, worker, announce, request_log=request_logger)
-    set_job_service(job_service)
-    wake_detector = OpenWakeWordDetector(settings.wake_word, settings.wake_threshold)
-    if settings.mic_autorecover:
-        try:
-            ensure_microphone_audio()
-        except Exception as exc:
-            logger.exception("Microphone check failed; continuing to daemon wait")
-            emit("mic.check_failed", "mic_check", "error", error=str(exc), exc_type=type(exc).__name__)
-    if not asyncio.run(wait_for_daemon(settings.daemon_status_url, settings.daemon_wait_s)):
-        exit_process(DAEMON_UNAVAILABLE_EXIT_CODE, "Reachy daemon did not become ready")
-    try:
-        robot = ReachyMini()
-    except (ConnectionError, TimeoutError) as exc:
-        exit_process(DAEMON_UNAVAILABLE_EXIT_CODE, f"could not connect to the Reachy daemon: {exc}")
-    movement_manager = MovementManager(current_robot=robot)
-
-    def request_sleep() -> dict[str, object]:
-        """Request the current session close without stopping the app."""
-        gate.request_close(CloseReason.USER_DISMISSED)
-        return {"status": "close_requested"}
-
-    deps = ToolDependencies(
-        reachy_mini=robot,
-        movement_manager=movement_manager,
-        camera_enabled=True,
-        go_to_sleep=request_sleep,
+    request_log = (
+        HttpRequestLog(settings.garage_url, settings.garage_repos, token=settings.garage_token)
+        if settings.garage_url is not None
+        else None
     )
-    initialize_tools(force=True)
+    conversation_ref: Conversation | None = None
 
-    def build_handler(startup_voice: str | None = None) -> GPTLiveHandler:
-        """Build a fresh wake-gated Live handler."""
-        nonlocal current_handler
-        current_handler = GPTLiveHandler(
-            deps,
-            settings,
-            wake_detector=wake_detector,
-            gate=gate,
-            spend_log=spend_log,
-            startup_voice=startup_voice,
-            background_tasks=background_factories,
-        )
-        return current_handler
+    async def announce(text: str) -> None:
+        if conversation_ref is not None:
+            await conversation_ref.announce(text)
 
-    async def request_stop() -> None:
-        if current_handler is not None:
-            await current_handler.request_stop()
-
-    def status() -> LiveStatus:
-        if current_handler is not None:
-            return current_handler.status()
-        return LiveStatus(
-            state=GateState.ASLEEP,
-            session_elapsed_s=0.0,
-            seconds_used_today=gate.seconds_used_today,
-            seconds_remaining_today=gate.seconds_remaining_today,
-            last_close_reason=gate.last_close_reason,
-        )
-
-    handler = build_handler(settings.voice)
-    ui_app = create_app(
-        status,
-        job_service,
-        request_stop,
-        cost_tracker,
-        event_log=event_log,
-        monitor=monitor,
-        detector=detector,
-        reporter=reporter,
+    jobs = JobService(board, worker, announce, request_log=request_log)
+    profile = load_profile(settings.profile, settings.profiles_dir)
+    voice_model = OpenAILiveVoiceModel(settings.openai_api_key, settings.live_model, settings.backend_model)
+    vision = OpenAIVision(settings.openai_api_key, settings.vision_model) if settings.openai_api_key else None
+    gateway = DeviceGateway(
+        load_device_configs(settings.devices_file),
+        wake_detector_factory=lambda: OpenWakeWordDetector(settings.wake_word, settings.wake_threshold),
+        preroll_seconds=settings.preroll_seconds,
+        describe_image=vision,
     )
-    ui_server = uvicorn.Server(
-        uvicorn.Config(ui_app, host=settings.ui_host, port=settings.ui_port, log_level="warning")
+    core_tools = build_core_tools(
+        jobs,
+        costs,
+        lambda: gate.request_close(CloseReason.USER_DISMISSED),
     )
-
-    async def run_ui() -> None:
-        await ui_server.serve()
-
-    async def daemon_lost(state: str) -> None:
-        exit_process(DAEMON_LOST_EXIT_CODE, f"Reachy daemon lost (state={state}); restart required")
-
-    async def run_daemon_watchdog() -> None:
-        await watch_daemon(
-            settings.daemon_status_url,
-            settings.daemon_watchdog_s,
-            settings.daemon_watchdog_failures,
-            daemon_lost,
-        )
-
-    async def run_heartbeat() -> None:
-        started_at = time.monotonic()
-        while True:
-            await asyncio.sleep(settings.heartbeat_s)
-            emit(
-                "app.heartbeat",
-                "app",
-                state=gate.state.value,
-                uptime_s=time.monotonic() - started_at,
-            )
-
-    background_factories.extend(
-        [
-            lambda: job_service.run_poller(settings.job_poll_s),
-            run_ui,
-            run_daemon_watchdog,
-            run_heartbeat,
-            monitor.run,
-        ]
+    conversation = Conversation(
+        settings,
+        voice_model=voice_model,
+        gate=gate,
+        spend_log=spend_log,
+        profile=profile,
+        core_tools=core_tools,
+        hub=gateway,
+        startup_voice=profile.voice or settings.voice,
     )
-    if reporter is not None:
-        background_factories.append(reporter.run)
-    dispatcher = build_dispatcher(settings)
-    if dispatcher is not None:
-        background_factories.append(dispatcher.run)
+    conversation_ref = conversation
+    gateway.set_listener(conversation)
+    ui = create_app(
+        conversation.status,
+        jobs,
+        conversation.request_stop,
+        costs,
+        devices=gateway.status,
+    )
     emit(
         "app.started",
         "app",
@@ -243,10 +184,17 @@ def main() -> None:
         settings.backend_model,
         settings.voice,
         settings.wake_word,
-        reachy_config.REACHY_MINI_CUSTOM_PROFILE,
-        reachy_config.PROFILES_DIRECTORY,
+        profile.name,
+        settings.profiles_dir,
         settings.daily_budget_s,
     )
-    asyncio.run(handler.prepare_asleep())
-    stream = LocalStream(handler, robot, handler_factory=build_handler, startup_voice=settings.voice)
-    stream.launch()
+    return App(ui, gateway, conversation, jobs, settings)
+
+
+def main() -> None:
+    """Load environment settings and run the ambient-home hub."""
+    load_dotenv()
+    log_level = logging.getLevelNamesMapping().get(os.getenv("AMBIENT_LOG_LEVEL", "INFO").upper(), logging.INFO)
+    logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    app = build_app(settings_from_env())
+    asyncio.run(app.run())

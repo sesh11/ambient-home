@@ -5,12 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ambient-home"
 version = "0.1.0"
-description = "Ambient voice assistant for Reachy Mini"
+description = "Ambient voice assistant hub"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "reachy-mini-conversation-app @ git+https://github.com/pollen-robotics/reachy_mini_conversation_app.git@f885bf421764ff7ff18dff26ae77b24b99a3af8c",
+    "ambient-device-sdk",
+    "garage-sdk",
     "openai>=3.12.0,<4",
+    "websockets>=13,<16",
     "openwakeword",
     "onnxruntime",
     "numpy",
@@ -23,7 +25,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ambient-device-sdk",
     "pytest",
     "pytest-asyncio",
     "ruff==0.15.20",
@@ -33,21 +34,15 @@ dev = [
 
 [project.scripts]
 ambient-home = "ambient_home.main:main"
-ambient-mic-check = "ambient_home.mic_check:main"
-ambient-hw-test = "ambient_home.hw_test:main"
-ambient-report = "ambient_home.factory.cli:main"
-ambient-dispatch = "ambient_home.factory.cli:dispatch_main"
 ambient-install-service = "ambient_home.service:install_main"
 ambient-uninstall-service = "ambient_home.service:uninstall_main"
-
-[tool.uv]
-override-dependencies = ["openai>=3.12.0,<4"]
 
 [tool.uv.workspace]
 members = ["packages/ambient-device-sdk"]
 
 [tool.uv.sources]
 ambient-device-sdk = { workspace = true }
+garage-sdk = { git = "https://github.com/sesh11/garage.git", rev = "de0dd204724a195a20abd061e6c2dbf3e4c68df3", subdirectory = "packages/garage-sdk" }
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -57,7 +52,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-ambient_home = ["models/*.onnx", "profiles/**/*.md", "ui/index.html", "launchd/*.plist", "incident_rules.toml"]
+ambient_home = ["models/*.onnx", "profiles/**/*.md", "ui/index.html", "launchd/*.plist"]
 
 [tool.ruff]
 line-length = 119

@@ -3,26 +3,35 @@
 import asyncio
 import logging
 from typing import Protocol
+from dataclasses import dataclass
 from collections.abc import Callable, Awaitable
 
-from ambient_home.telemetry import emit
+from garage_sdk import emit
+
 from ambient_home.jobs.board import Job, JobBoard, JobStatus
-from ambient_home.jobs.worker import Worker
-from ambient_home.factory.github import IssueRecord
+from ambient_home.connectors.coding.worker import Worker
 
 
 logger = logging.getLogger(__name__)
 Announcer = Callable[[str], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class RequestRecord:
+    """Garage request number and URL."""
+
+    number: int
+    url: str
+
+
 class RequestLog(Protocol):
-    """Records voice requests somewhere durable (a GitHub issue) before work starts."""
+    """Records voice requests somewhere durable before work starts."""
 
     def wants(self, repository: str | None) -> bool:
         """Return whether requests for this repository should be recorded."""
         ...
 
-    async def file(self, job: Job) -> IssueRecord | None:
+    async def file(self, job: Job) -> RequestRecord | None:
         """Record the request and return the created issue, if any."""
         ...
 
@@ -61,7 +70,7 @@ class JobService:
         try:
             issue = await self.request_log.file(job)
         except Exception as exc:
-            logger.exception("Could not file a GitHub issue for job %s", job.id)
+            logger.error("Could not file a Garage request for job %s (%s)", job.id, type(exc).__name__)
             emit(
                 "factory.report_failed", "factory", "error", job_id=job.id, exc_type=type(exc).__name__, error=str(exc)
             )
@@ -77,7 +86,7 @@ class JobService:
         try:
             await self.request_log.mark_fixing(job.issue_number)
         except Exception as exc:
-            logger.exception("Could not relabel issue #%s for job %s", job.issue_number, job.id)
+            logger.error("Could not mark Garage request #%s fixing (%s)", job.issue_number, type(exc).__name__)
             emit(
                 "factory.report_failed", "factory", "error", job_id=job.id, exc_type=type(exc).__name__, error=str(exc)
             )
