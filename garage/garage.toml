@@ -1,0 +1,36 @@
+# App config for ambient-home, not generic Garage code.
+[app]
+id = "ambient-home"
+repo = "sesh11/ambient-home"
+
+[signals]
+path = "~/Library/Logs/ambient-home/events"
+retention_days = 14
+
+[detect]
+rules = "rules.toml"
+
+[build]
+check = ["uv run ruff check .", "uv run mypy", "uv run pytest tests/ -q"]
+
+[report]
+attribution = "Filed automatically by the ambient-home garage from an incident the app detected."
+request_attribution = "Filed automatically by the ambient-home garage."
+max_new_issues_per_day = 5
+
+[dispatch]
+interval = "1h"
+outpost = "my-mac"
+legacy_ledger = "~/.ambient-home/factory_dispatch.json"
+
+[[test_kit]]
+name = "robot"
+# provided by ambient-devices (reachy-mini-lite test kit)
+command = "uv run ambient-hw-test --markdown /tmp/ambient-hw-test-{issue}.md"
+runs_on = "outpost:my-mac"
+max_minutes = 3
+costs_money = false
+
+[policy]
+needs_approval = ["triage", "plan", "release"]
+auto_release = false

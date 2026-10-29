@@ -1,302 +1,89 @@
 # ambient-home
 
-Ambient voice assistant for Reachy Mini Lite, using Pollen's conversation app as
-the local robot/media/tools substrate and OpenAI GPT-Live as its brain.
+Ambient-home is a local voice-assistant hub. It connects device plugins through
+`ambient-device-sdk`, routes audio through one wake-gated conversation, and
+provides a local status UI, job board, and usage estimates. The OpenAI voice
+connector and Devin coding worker are adapters; the hub can also start with no
+device configured.
 
-## Architecture
-
-1. Reachy Mini daemon provides robot motion and media.
-2. Pollen's `LocalStream` captures and plays audio.
-3. `GPTLiveHandler` owns wake-gated sessions.
-4. OpenAI Live handles speech-to-speech conversation.
-5. Responses delegation runs robot tools through Pollen's tool manager.
-6. The local “hey jarvis” detector gates paid sessions.
-7. A preroll buffer preserves speech immediately after wake.
-8. Idle, session, and daily audio caps limit spend.
-9. Robot tools remain Pollen-compatible external tools.
-10. Devin dispatch and the loopback status UI run as background services.
-
-## Install
-
-Run `reachy-mini-daemon` first, then:
+## Install and run
 
 ```bash
 uv sync
 cp .env.example .env
-# edit OPENAI_API_KEY and any desired settings
+# Set OPENAI_API_KEY and any desired options in .env.
 uv run ambient-home
 ```
 
-The Reachy Mini dependency currently requires Python 3.11 on Linux because its
-TensorFlow Lite runtime has no Python 3.12 wheel; `.python-version` pins the
-supported environment.
-
-Simulator mode:
-
-```bash
-reachy-mini-daemon --sim
-uv run ambient-home
-```
-
-At startup the assistant probes the microphone and, if it is returning only
-zeros, reboots Reachy's XMOS audio processor once before listening (disable
-with `AMBIENT_MIC_AUTORECOVER=false`). `uv run ambient-mic-check` runs the
-same probe standalone.
+Open <http://127.0.0.1:8765/> for live state, configured devices, jobs, and
+costs. To configure devices, copy `devices.example.toml` to
+`~/.ambient-home/devices.toml` (or set `AMBIENT_DEVICES_FILE`) and install the
+corresponding device connector. Device connectors live in the
+[ambient-devices](https://github.com/sesh11/ambient-devices) project and can be
+developed independently against `ambient-device-sdk`.
 
 ## Environment
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | required to wake | OpenAI API credential |
-| `AMBIENT_LIVE_MODEL` | `gpt-live-1` | Live model |
+| `OPENAI_API_KEY` | unset | Required to open a Live conversation; clients are created lazily |
+| `AMBIENT_LIVE_MODEL` | `gpt-live-1` | Realtime voice model |
 | `AMBIENT_BACKEND_MODEL` | `gpt-5.6-terra` | Responses delegation model |
-| `AMBIENT_VISION_MODEL` | backend model | Vision tool model |
-| `AMBIENT_VOICE` | `ballad` | Live voice |
-| `AMBIENT_LOG_LEVEL` | `INFO` | Application log level |
-| `AMBIENT_WAKE_WORD` | `hey_jarvis` | openWakeWord model |
+| `AMBIENT_VISION_MODEL` | backend model | Vision model |
+| `AMBIENT_VOICE` | `ballad` | Default Live voice |
+| `AMBIENT_PROFILE` | `alfred` | Persona profile under `profiles/` |
+| `AMBIENT_PROFILES_DIR` | packaged profiles | Optional profile directory |
+| `AMBIENT_WAKE_WORD` | `hey_jarvis` | Local openWakeWord model |
 | `AMBIENT_WAKE_THRESHOLD` | `0.5` | Wake confidence threshold |
 | `AMBIENT_PREROLL_SECONDS` | `2.0` | Audio retained before wake |
-| `AMBIENT_IDLE_TIMEOUT_S` | `60` | Idle close cap |
-| `AMBIENT_MAX_SESSION_S` | `600` | Per-session cap |
-| `AMBIENT_DAILY_BUDGET_S` | `3600` | Daily audio budget |
-| `AMBIENT_DATA_DIR` | `~/.ambient-home` | Spend log directory |
-| `AMBIENT_TRANSCRIPT_FINALIZE_S` | `1.0` | Transcript debounce |
-| `DEVIN_API_KEY` | unset | Devin service-user API key (`cog_…`) |
-| `DEVIN_ORG_ID` | unset | Devin organization ID (`org-…`, from app.devin.ai → Settings → Organization); required together with a `cog_` service-user API key |
+| `AMBIENT_IDLE_TIMEOUT_S` | `60` | Idle session limit |
+| `AMBIENT_MAX_SESSION_S` | `600` | Maximum session length |
+| `AMBIENT_DAILY_BUDGET_S` | `3600` | Daily Live audio budget |
+| `AMBIENT_DATA_DIR` | `~/.ambient-home` | Local jobs, spend, and device configuration |
+| `AMBIENT_DEVICES_FILE` | `<data dir>/devices.toml` | TOML device plugin configuration |
+| `AMBIENT_TRANSCRIPT_FINALIZE_S` | `1.0` | Transcript debounce interval |
+| `DEVIN_API_KEY` | unset | Devin service-user API key |
+| `DEVIN_ORG_ID` | unset | Devin organization ID |
 | `DEVIN_API_BASE_URL` | `https://api.devin.ai` | Devin API base URL |
-| `AMBIENT_DEVIN_MAX_ACU` | `5` | Maximum ACU per Devin session |
-| `AMBIENT_LIVE_USD_PER_MINUTE` | `0.3` | Dollar estimate per Live audio minute |
-| `AMBIENT_ACU_USD` | `2.25` | Dollar estimate per worker ACU |
-| `AMBIENT_COST_HISTORY_DAYS` | `7` | Days of usage history charted in the UI |
+| `AMBIENT_DEVIN_MAX_ACU` | `5` | Maximum ACUs per Devin session |
+| `AMBIENT_GARAGE_URL` | unset | Enables optional request filing; local Garage defaults to `http://127.0.0.1:8770` |
+| `AMBIENT_GARAGE_TOKEN` | unset | Optional bearer token for the local Garage service |
+| `AMBIENT_GARAGE_REPOS` | `sesh11/ambient-home` | Repositories whose jobs are filed with Garage |
+| `AMBIENT_EVENT_RESOURCE` | `false` | Add local install/version identity to events |
+| `AMBIENT_EVENTS_DIR` | `~/Library/Logs/ambient-home/events` | Local JSONL event directory |
+| `AMBIENT_EVENT_RETENTION_DAYS` | `14` | Event retention |
+| `AMBIENT_HEARTBEAT_S` | `300` | Application heartbeat interval |
+| `AMBIENT_LIVE_USD_PER_MINUTE` | `0.3` | Local Live audio cost estimate |
+| `AMBIENT_ACU_USD` | `2.25` | Local worker ACU cost estimate |
+| `AMBIENT_COST_HISTORY_DAYS` | `7` | Cost history shown in the UI |
 | `AMBIENT_JOB_POLL_S` | `20` | Job refresh interval |
-| `AMBIENT_UI_HOST` | `127.0.0.1` | Local status UI bind address |
-| `AMBIENT_UI_PORT` | `8765` | Local status UI port |
-| `AMBIENT_MIC_AUTORECOVER` | `true` | Reboot the XMOS audio processor at startup if the mic is silent |
-| `AMBIENT_DAEMON_STATUS_URL` | `http://127.0.0.1:8000/api/daemon/status` | Reachy daemon status endpoint |
-| `AMBIENT_DAEMON_WAIT_S` | `60` | How long to wait for the daemon at startup before exiting non-zero |
-| `AMBIENT_DAEMON_WATCHDOG_S` | `5` | Daemon liveness poll interval while running |
-| `AMBIENT_DAEMON_WATCHDOG_FAILURES` | `3` | Consecutive failed polls before the app exits for restart |
-| `AMBIENT_FACTORY_REPORT` | `false` | File incidents and voice fix/feature requests as GitHub issues |
-| `AMBIENT_GITHUB_TOKEN` | unset | Fine-grained token for the factory repo with only Issues: read and write |
-| `AMBIENT_FACTORY_REPO` | `sesh11/ambient-home` | Repository that receives factory issues |
-| `AMBIENT_FACTORY_MAX_NEW_ISSUES_PER_DAY` | `5` | Daily cap on new issues, per kind |
-| `AMBIENT_FACTORY_DISPATCH` | `false` | Start a cloud Devin fix session for each `factory:ready-for-fix` issue |
-| `AMBIENT_FACTORY_DISPATCH_INTERVAL` | `1h` | How often to look for ready issues (`30m`, `1h`, `6h`, ...) |
-| `AMBIENT_FACTORY_OUTPOST` | `my-mac` | Mac outpost pool a fix session uses only for the robot test |
+| `AMBIENT_UI_HOST` | `127.0.0.1` | UI bind address |
+| `AMBIENT_UI_PORT` | `8765` | UI port |
+| `AMBIENT_LOG_LEVEL` | `INFO` | Application log level |
 
-Set `AMBIENT_WAKE_WORD=hey_alfred` to use the bundled custom wake-word model.
+## Behavior and privacy
 
-## Jobs and status UI
+Wake-word detection, the device gateway, session limits, and the status UI run
+locally. The core writes structured events to Garage SDK's local JSONL event
+store. Events contain operational metadata; transcripts, audio, Live payloads,
+and request text are not logged. When configured, Garage receives job requests
+for the selected repositories. Devin receives a job only when one is dispatched.
 
-Say “dispatch a coding task” to hand work to Devin. Jobs are PR-only: Devin
-must not merge, push directly to `main`/`master`, deploy, or change branch
-protection or CI security settings. No secrets are shared with Devin by
-default. Blocked jobs can be answered by voice with `answer_job` or in the UI.
+Jobs are PR-only: Devin must not merge, push directly to `main`/`master`, deploy,
+or change branch protection or CI security settings. No secrets are shared with
+Devin by default. Blocked jobs can be answered by voice or in the UI. The
+dashboard reports local cost estimates for Live minutes and worker ACUs; the
+configured budgets limit Live session use.
 
-With the app running, open <http://127.0.0.1:8765/> for live state, daily
-usage, job status, pull-request links, and a stop-session button. Cancelling a
-job through an API is not implemented in this MVP.
+The `garage/` directory contains the app-specific Garage rules and draft product
+brief. The architecture and package boundaries are described in
+[`docs/architecture.md`](docs/architecture.md).
 
-## Telemetry and incidents
+## Service and development
 
-Structured events are stored locally as daily JSONL files in
-`~/Library/Logs/ambient-home/events` by default. Set `AMBIENT_EVENTS_DIR` to
-override the location; files older than `AMBIENT_EVENT_RETENTION_DAYS` (14 by
-default) are pruned. Event data includes operational types, component names,
-status codes, durations, and scrubbed errors. Transcripts, prompts, request
-text, audio, Live payloads, and tool results are never recorded. Personal
-identifiers and common credentials are scrubbed before writing. Nothing in this
-telemetry path is sent to GitHub, Devin, or another remote service unless
-factory reports are turned on (see below).
+On macOS, `uv run ambient-install-service` installs the app LaunchAgent;
+`uv run ambient-uninstall-service` removes only the ambient-home app agent. The
+device project owns its daemon and device services.
 
-The packaged `incident_rules.toml` defines the initial local rules. Override it
-with `AMBIENT_INCIDENT_RULES`; choose the implementation with
-`AMBIENT_DETECTOR=rules`. `ambient_home.incidents.base.Detector` is the stable
-async interface and `incidents/registry.py` is the single swap point for a
-future LLM-driven or auto-discovered detector.
-
-The local API exposes recent events and on-demand incident detection:
-
-```bash
-curl 'http://127.0.0.1:8765/api/events?since=12h&type=mic.check&limit=100'
-curl 'http://127.0.0.1:8765/api/incidents?since=24h'
-```
-
-## Factory reports (GitHub issues)
-
-With `AMBIENT_FACTORY_REPORT=true` and `AMBIENT_GITHUB_TOKEN` set, the app turns
-detected incidents into GitHub issues in `AMBIENT_FACTORY_REPO`:
-
-- One incident fingerprint is one issue. A hidden `<!-- factory-fingerprint: … -->`
-  marker in the body lets the app find it again after a restart.
-- New incidents open with `factory:incident` + `factory:observed`; at the rule's
-  threshold the label becomes `factory:ready-for-fix` (add it by hand to ask
-  sooner). Counts are refreshed in the body at most every 10 minutes; the only
-  comment is when an issue turns ready.
-- If a closed issue's incident is seen again after it was closed, the issue is
-  reopened with a comment. Events from before the close don't count.
-- Fixes or features asked for by voice for this repo (`dispatch_job` with
-  `repository=sesh11/ambient-home`) are filed as `factory:request` +
-  `factory:ready-for-fix`, skipping the observed step, and move to
-  `factory:fixing` once the Devin session starts. The Devin prompt carries the
-  issue link so the PR can say `Closes #N`.
-- Only scrubbed event fields go out, and the scrubber runs again on everything
-  posted. Voice request text is scrubbed too, but it is posted, so the repo
-  being public matters.
-- At most `AMBIENT_FACTORY_MAX_NEW_ISSUES_PER_DAY` new issues a day, per kind.
-
-Create the token at GitHub → Settings → Developer settings → Fine-grained
-tokens: repository access *only* `sesh11/ambient-home`, permission *Issues:
-Read and write* (Metadata read is added automatically). Preview or run one pass:
-
-```bash
-uv run ambient-report --dry-run --since 7d    # prints what it would post for incidents in the last 7 days
-uv run ambient-report --since 7d              # posts it
-```
-
-## Factory dispatch (fix sessions)
-
-With `AMBIENT_FACTORY_DISPATCH=true`, plus `AMBIENT_GITHUB_TOKEN`, `DEVIN_API_KEY`
-and `DEVIN_ORG_ID`, the app checks GitHub every
-`AMBIENT_FACTORY_DISPATCH_INTERVAL` (default one hour) for open issues labeled
-`factory:ready-for-fix` and starts one Devin session per issue to fix it:
-
-- The fix session runs in the Devin cloud. Only if the change needs the robot
-  does it start a short child session on the Mac outpost
-  (`AMBIENT_FACTORY_OUTPOST`), which runs `uv run ambient-hw-test --markdown`
-  (never `--live`) from a separate git worktree and sends back the report for
-  the PR. The always-on app's checkout is never switched.
-- The session gets only the scrubbed issue title and body (no comments), opens
-  one PR with `Closes #N`, and never merges.
-- Voice-request issues (`factory:request`) are skipped: they already have a
-  session.
-- Never twice: the session is saved to `factory_dispatch.json` in the data
-  directory before the issue gets `factory:dispatched` + `factory:fixing` and a
-  comment linking the session. When the session ends, a second comment gives the
-  PR link (or what went wrong) and `factory:fixing` is removed. To try again,
-  remove `factory:dispatched` by hand.
-- Each session is capped at `AMBIENT_DEVIN_MAX_ACU`.
-
-Preview or run one pass:
-
-```bash
-uv run ambient-dispatch --dry-run --show-prompt   # prints what it would start; changes nothing
-uv run ambient-dispatch                           # starts the sessions
-```
-
-## Run as a service (macOS)
-
-Install both processes as per-user LaunchAgents so Reachy comes back on its
-own after a reboot or a USB replug, with no terminal open:
-
-```bash
-cd ~/path/to/ambient-home      # the checkout with your .env
-uv run ambient-install-service
-```
-
-This renders two plists from `src/ambient_home/launchd/` into
-`~/Library/LaunchAgents/` and bootstraps them into `gui/$UID`:
-
-| Agent | Runs | Log |
-| --- | --- | --- |
-| `ai.ambient-home.daemon` | `scripts/run-daemon.sh` → `reachy-mini-daemon --serialport /dev/cu.usbmodem…` | `~/Library/Logs/ambient-home/daemon.log` |
-| `ai.ambient-home.app` | `uv run ambient-home` | `~/Library/Logs/ambient-home/app.log` |
-
-Both use `RunAtLoad`, `KeepAlive` (`SuccessfulExit=false`) and a 10 s
-`ThrottleInterval`. Secrets are not placed in the plists; the app reads `.env`
-from the repo working directory as before.
-
-How the pieces recover:
-
-- `run-daemon.sh` resolves the serial port at start and exits `69` when no
-  `/dev/cu.usbmodem*` exists, then exits `75` if the port vanishes mid-run.
-  launchd restarts it after the throttle interval.
-- `ambient-home` runs the mic check, then polls the daemon status endpoint
-  until it reports `running` (up to `AMBIENT_DAEMON_WAIT_S`) before connecting
-  to Reachy; it exits `69` on timeout. While running, a watchdog polls the
-  daemon every `AMBIENT_DAEMON_WATCHDOG_S` and exits `75` after
-  `AMBIENT_DAEMON_WATCHDOG_FAILURES` consecutive failures so launchd restarts
-  it, which re-runs the XMOS mic recovery.
-
-Useful commands:
-
-```bash
-tail -f ~/Library/Logs/ambient-home/app.log ~/Library/Logs/ambient-home/daemon.log
-launchctl print gui/$UID/ai.ambient-home.app | head -20      # state, pid, last exit
-launchctl kickstart -k gui/$UID/ai.ambient-home.app          # restart the app now
-launchctl bootout gui/$UID/ai.ambient-home.app               # stop temporarily
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ai.ambient-home.app.plist  # start again
-uv run ambient-uninstall-service                             # remove both agents
-uv run ambient-install-service --dry-run                     # preview the plists
-```
-
-Stop the app agent (`bootout`) before running `uv run ambient-home` by hand,
-otherwise two copies compete for the microphone and the status UI port.
-
-Replug acceptance test: with both agents loaded, unplug Reachy and plug it back
-in. Expect in `daemon.log`: `serial port ... vanished` followed within ~10–20 s
-by `starting reachy-mini-daemon on /dev/cu.usbmodem…`. Expect in `app.log`:
-`Reachy daemon check failed (3/3 ...)`, `Exiting with status 75`, then on the
-restart `Microphone check: ok` (or `Microphone recovered after audio processor
-restart`), `Reachy daemon ready`, and the asleep heartbeat. Reachy should be
-listening for the wake word within about 30 s of the replug.
-
-## Hardware test
-
-`uv run ambient-hw-test` checks the real robot in under two minutes and exits
-0 (pass) or 1 (fail). It pauses only the always-on app agent
-(`ai.ambient-home.app`; the daemon keeps running) and always starts it again
-at the end. Checks: telemetry write/read, daemon running, audio board
-firmware, microphone gives real sound, wake word fires (it plays the wake
-phrase with `say`), and a small head nod read back from the pose.
-
-By default the wake check uses only the local detector, so no paid OpenAI
-Live session opens and nothing can dispatch a Devin job. Useful flags:
-
-```bash
-uv run ambient-hw-test --live                 # also open one Live session (costs money)
-uv run ambient-hw-test --no-speak             # say the wake word yourself
-uv run ambient-hw-test --no-pause             # app agent already stopped
-uv run ambient-hw-test --markdown hw.md --json hw.json   # scrubbed reports for a PR
-```
-
-## Costs
-
-The dashboard charts daily usage over the last `AMBIENT_COST_HISTORY_DAYS`
-days: Live audio minutes and worker ACUs per day, with dollar estimates from
-`AMBIENT_LIVE_USD_PER_MINUTE` and `AMBIENT_ACU_USD`, plus today's totals and
-the window total. Ask “what have we spent today?” for the same numbers by
-voice. Rates are local estimates only — no usage data leaves the machine.
-
-## Not yet
-
-TTS announcements while asleep, provider workers other than Devin, and remote
-job cancellation are not yet implemented. Barge-in audio queue flushing is
-also pending hardware verification.
-
-Hardware verification still needed: microphone/speaker behavior, AEC,
-barge-in flushing, direction of arrival, a real OpenAI Live session, and a
-real Devin dispatch.
-
-### Microphone returns silence
-
-Reachy Mini Lite's XMOS audio processor can stream all-zero microphone frames
-after a USB connect or power cycle until it is rebooted — the known
-[Reachy Mini XMOS startup issue](https://github.com/pollen-robotics/reachy_mini/issues/770).
-The assistant recovers from this automatically at startup and logs
-`Microphone recovered after audio processor restart`. To reproduce or recover
-by hand:
-
-```bash
-uv run ambient-mic-check                # expect verdict=silent when faulted
-uv run ambient-mic-check --reboot-xmos  # reboots the chip, expect verdict=ok
-```
-
-If the microphone is still silent after the reboot, check the microphone FPC
-cable per Pollen's troubleshooting guide rather than tuning the wake word.
-On macOS, the daemon may need an explicit serial port:
-
-```bash
-ls /dev/cu.usbmodem*
-reachy-mini-daemon --serialport /dev/cu.usbmodem…
-```
+Run the test suite with `uv run pytest -q`. Real devices and provider APIs are
+not needed for tests; provider calls use fakes or HTTP mocks.
