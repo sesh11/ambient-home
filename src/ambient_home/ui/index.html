@@ -240,14 +240,20 @@
     function renderJobs(jobs) {
       const body = document.getElementById("jobs");
       const existingRows = Array.from(body.querySelectorAll("tr"));
+      const focusedRow = existingRows.find(row => row.contains(document.activeElement));
       const seen = new Set();
-      jobs.forEach(job => {
+      let nextRow = null;
+      [...jobs].reverse().forEach(job => {
         let row = existingRows.find(candidate => candidate.dataset.jobId === job.id);
         if (!row) {
           row = createJobRow(job);
         }
         updateJobRow(row, job);
-        body.appendChild(row);
+        // Reorder neighbours without detaching the active answer field.
+        if (row !== focusedRow && (row.parentNode !== body || row.nextElementSibling !== nextRow)) {
+          body.insertBefore(row, nextRow);
+        }
+        nextRow = row;
         seen.add(job.id);
       });
       existingRows.forEach(row => {
