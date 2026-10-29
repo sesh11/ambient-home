@@ -1,8 +1,10 @@
 """OpenAI Live adapter contract tests without provider calls."""
 
 import base64
+import logging
 
 import pytest
+from websockets.exceptions import ConnectionClosed
 
 from ambient_home.connectors.voice.base import (
     AudioOut,
@@ -10,9 +12,10 @@ from ambient_home.connectors.voice.base import (
     VoiceError,
     TranscriptDelta,
     VoiceSessionConfig,
+    VoiceConnectionLost,
     VoiceStartupTimeout,
 )
-from ambient_home.connectors.voice.openai_live import OpenAILiveVoiceModel, _decode_event
+from ambient_home.connectors.voice.openai_live import OpenAILiveVoiceModel, _decode_event, _OpenAISession
 
 
 def test_client_is_lazy_and_session_configuration_matches_live_contract() -> None:
@@ -113,3 +116,108 @@ async def test_open_is_lazy_and_ends_if_started_event_never_arrives() -> None:
         async with model.open(VoiceSessionConfig("instructions", "ballad", [])):
             pytest.fail("session should not start")
     assert created == [{"api_key": "secret"}]
+
+
+class WireInputAudio:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def append(self, **data: object) -> None:
+        self.calls.append(data)
+
+
+class WireCommentary:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def append(self, **data: object) -> None:
+        self.calls.append(data)
+
+
+class WireSession:
+    def __init__(self) -> None:
+        self.input_audio = WireInputAudio()
+        self.commentary = WireCommentary()
+        self.closed = 0
+
+    async def close(self) -> None:
+        self.closed += 1
+
+
+class WireResponseItem:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def create(self, **data: object) -> None:
+        self.calls.append(data)
+
+
+class WireResponse:
+    def __init__(self) -> None:
+        self.item = WireResponseItem()
+        self.created = 0
+
+    async def create(self) -> None:
+        self.created += 1
+
+
+class WireConnection:
+    def __init__(self) -> None:
+        self.session = WireSession()
+        self.response = WireResponse()
+
+
+@pytest.mark.asyncio
+async def test_session_methods_emit_exact_provider_wire_calls() -> None:
+    connection = WireConnection()
+    session = _OpenAISession(connection)
+
+    await session.send_audio(b"\x01\x02")
+    await session.send_tool_result("call-1", {"ok": True})
+    await session.request_response()
+    await session.say("Hello")
+
+    assert connection.session.input_audio.calls == [{"audio": base64.b64encode(b"\x01\x02").decode("ascii")}]
+    assert connection.response.item.calls == [
+        {"item": {"type": "function_call_output", "call_id": "call-1", "output": '{"ok": true}'}}
+    ]
+    assert connection.response.created == 1
+    assert connection.session.commentary.calls == [{"content": "Hello", "delegation_id": None}]
+
+
+@pytest.mark.asyncio
+async def test_websocket_connection_closed_maps_for_audio_send_and_events() -> None:
+    connection = WireConnection()
+    closed = ConnectionClosed(None, None)
+
+    async def fail_append(**_data: object) -> None:
+        raise closed
+
+    connection.session.input_audio.append = fail_append
+    session = _OpenAISession(connection)
+    with pytest.raises(VoiceConnectionLost):
+        await session.send_audio(b"pcm")
+
+    class BrokenConnection(WireConnection):
+        def __aiter__(self):
+            async def broken_events():
+                raise ConnectionClosed(None, None)
+                yield None
+
+            return broken_events()
+
+    with pytest.raises(VoiceConnectionLost):
+        async for _event in _OpenAISession(BrokenConnection()).events():
+            pass
+
+
+def test_error_event_maps_without_logging_user_content(caplog) -> None:
+    sentinel = "private error transcript sentinel"
+    caplog.set_level(logging.ERROR, logger="ambient_home.connectors.voice.openai_live")
+
+    event = _decode_event(
+        {"type": "error", "error": {"code": "bad_request", "type": "invalid_request", "message": sentinel}}
+    )
+
+    assert event == VoiceError("bad_request", "invalid_request", sentinel)
+    assert sentinel not in caplog.text
