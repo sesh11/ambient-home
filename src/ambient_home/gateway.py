@@ -410,7 +410,9 @@ def load_device_configs(path: Path) -> list[DeviceConfig]:
     except FileNotFoundError:
         logger.info("No devices configured at %s", path)
         return []
-    devices = document.get("device", [])
+    if "device" in document:
+        raise ValueError("use [[devices]] tables, not [[device]]")
+    devices = document.get("devices", [])
     if not isinstance(devices, list):
-        raise ValueError("devices TOML must contain [[device]] tables")
+        raise ValueError("devices TOML must contain [[devices]] tables")
     return parse_device_configs(devices)

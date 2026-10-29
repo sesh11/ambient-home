@@ -20,7 +20,9 @@ costs. To configure devices, copy `devices.example.toml` to
 `~/.ambient-home/devices.toml` (or set `AMBIENT_DEVICES_FILE`) and install the
 corresponding device connector. Device connectors live in the
 [ambient-devices](https://github.com/sesh11/ambient-devices) project and can be
-developed independently against `ambient-device-sdk`.
+developed independently against `ambient-device-sdk`. Device configuration
+uses `[[devices]]` tables; `devices.example.toml` contains an optional
+Reachy Mini Lite example and its config keys.
 
 ## Environment
 

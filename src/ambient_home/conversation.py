@@ -140,6 +140,11 @@ class Conversation:
 
     def device_lost(self, device_id: str) -> None:
         """Close the conversation if its owner device is lost."""
+        if self._pending_device == device_id:
+            self._pending_device = None
+            self._wake_event.clear()
+            self.hub.release(device_id)
+            return
         if self._session is not None and self.hub.owner == device_id:
             self.gate.request_close(CloseReason.ERROR)
 
@@ -234,6 +239,10 @@ class Conversation:
                     if isinstance(event, Closed):
                         self._last_server_reason = event.reason
                         break
+            except Exception:
+                if self.gate.state is GateState.LIVE:
+                    self.gate.request_close(CloseReason.ERROR)
+                raise
             finally:
                 if close_watch is not None:
                     close_watch.cancel()

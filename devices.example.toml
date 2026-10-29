@@ -1,6 +1,11 @@
 # Copy this file to ~/.ambient-home/devices.toml and install the connector.
-# [[device]]
-# id = "reachy-desk"
+# pip/uv: ambient-reachy @ git+https://github.com/sesh11/ambient-devices.git@acacfde0d7ac0d515ada68f376cfc715f75361b4#subdirectory=packages/ambient-reachy
+# [[devices]]
+# id = "reachy"
 # kind = "reachy-mini-lite"
 # enabled = true
-# [device.config]
+# [devices.config]
+# daemon_status_url = "http://127.0.0.1:8000/api/daemon/status"
+# mic_autorecover = true
+# body_tools = ["dance", "stop_dance", "play_emotion", "stop_emotion", "move_head", "sweep_look", "head_tracking"]
+# camera = true
