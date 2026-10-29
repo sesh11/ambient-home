@@ -92,7 +92,6 @@ def _read_memory_file(path: Path) -> list[MemoryFact]:
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        logger.warning("Memory file not found at %s", path)
         return []
     except OSError as exc:
         logger.warning("Failed to read memory file at %s: %s", path, exc)
