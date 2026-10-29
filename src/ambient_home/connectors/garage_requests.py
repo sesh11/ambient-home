@@ -27,7 +27,12 @@ class HttpRequestLog:
 
     def wants(self, repository: str | None) -> bool:
         """Return whether Garage handles the selected repository."""
-        return repository in self.repositories
+        if not repository:
+            return False
+        target = repository.strip().lower().removeprefix("https://github.com/").removesuffix(".git").strip("/")
+        return any(
+            target in {configured.lower(), configured.lower().split("/")[-1]} for configured in self.repositories
+        )
 
     async def file(self, job: Job) -> RequestRecord | None:
         """Create a Garage request for a completed job."""

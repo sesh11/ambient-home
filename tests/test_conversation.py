@@ -15,6 +15,7 @@ from ambient_device_sdk import ToolSpec, SessionPhase, SessionState
 from ambient_home.config import settings_from_env
 from ambient_home.persona import load_profile
 from ambient_home.spend_log import SpendLog
+from ambient_home.tools.core import build_core_tools
 from ambient_home.conversation import Conversation
 from ambient_home.session_gate import GateState, CloseReason, SessionGate
 from ambient_home.connectors.voice.base import (
@@ -96,6 +97,7 @@ class Voice:
         self.open_error = open_error
         self.open_gate = open_gate
         self.opens = 0
+        self.open_exits = 0
         self.config = None
 
     def available(self) -> bool:
@@ -105,11 +107,14 @@ class Voice:
     async def open(self, config):
         self.opens += 1
         self.config = config
-        if self.open_gate is not None:
-            await self.open_gate.wait()
-        if self.open_error is not None:
-            raise self.open_error
-        yield self.session
+        try:
+            if self.open_gate is not None:
+                await self.open_gate.wait()
+            if self.open_error is not None:
+                raise self.open_error
+            yield self.session
+        finally:
+            self.open_exits += 1
 
 
 class Hub:
@@ -156,7 +161,12 @@ def _make_conversation(
     on_transcript=None,
     finalize_s: float = 0.01,
 ) -> tuple[Conversation, Voice, Hub]:
-    settings = replace(settings_from_env(), data_dir=tmp_path, transcript_finalize_s=finalize_s)
+    settings = replace(
+        settings_from_env(),
+        data_dir=tmp_path,
+        memory_file=tmp_path / "memory.v1.json",
+        transcript_finalize_s=finalize_s,
+    )
     voice = Voice(session, available=available, open_error=open_error, open_gate=open_gate)
     actual_hub = hub or Hub()
     conversation = Conversation(
@@ -201,6 +211,7 @@ async def test_preroll_is_flushed_before_greeting_and_spend_is_recorded(tmp_path
 
     assert session.calls[0] == ("audio", samples.tobytes())
     assert session.calls[1] == ("say", load_profile().greeting)
+    assert voice.config.instructions == f"{load_profile().instructions}\n\n{conversation_module._ADDENDUM}"
     assert hub.notifications[0].phase is SessionPhase.WAKE
     assert hub.notifications[-1].phase is SessionPhase.SLEEP
     assert hub.notifications[-1].reason == CloseReason.SERVER_CLOSED.value
@@ -481,6 +492,118 @@ async def test_change_voice_and_status_remain_available(tmp_path) -> None:
     assert await conversation.change_voice("alloy") == "Voice changed. Takes effect on the next wake."
     assert conversation.get_current_voice() == "alloy"
     assert conversation.status().state is GateState.ASLEEP
+
+
+@pytest.mark.asyncio
+async def test_memory_is_instructions_for_next_session_without_logging_or_emitting_text(
+    tmp_path,
+    caplog,
+) -> None:
+    sentinel = "private memory sentinel"
+    first = Session(
+        [ToolCall("remember-1", "remember", json.dumps({"fact": sentinel})), Closed("server_closed", None)],
+        delay_after_event=0.05,
+    )
+    second = Session([Closed("server_closed", None)])
+    conversation, voice, _ = _make_conversation(tmp_path, session=first)
+    conversation.core_tools = tuple(
+        build_core_tools(
+            object(),
+            object(),
+            lambda: None,
+            tmp_path / "memory.v1.json",
+        )
+    )
+    event_log = EventLog(tmp_path / "events")
+    caplog.set_level(logging.DEBUG)
+    configure(event_log)
+    try:
+        await conversation._run_session("device-1")
+
+        voice.session = second
+        await conversation._run_session("device-1")
+        assert voice.config.instructions.startswith(
+            "Things you remember about the user (use this context naturally,\n"
+            "do not recite the list verbatim):\n"
+            f"- {sentinel}\n\n"
+        )
+        assert (await conversation._dispatch_tool("forget", json.dumps({"query": sentinel})))["removed"] == sentinel
+        assert await conversation._dispatch_tool(
+            "forget",
+            json.dumps({"query": "private query sentinel"}),
+        ) == {"error": 'no memory matched "private query sentinel"; nothing was removed'}
+    finally:
+        configure(None)
+
+    event_text = "".join(path.read_text() for path in (tmp_path / "events").glob("*.jsonl"))
+    assert sentinel not in caplog.text
+    assert sentinel not in event_text
+
+
+@pytest.mark.asyncio
+async def test_device_lost_while_open_cancels_session_releases_owner_and_allows_another_wake(tmp_path) -> None:
+    open_gate = asyncio.Event()
+    conversation, voice, hub = _make_conversation(
+        tmp_path,
+        open_gate=open_gate,
+        session=Session(wait_for_close=True),
+    )
+    run_task = asyncio.create_task(conversation.run())
+    assert conversation.request_wake("device-1")
+    await _wait_for(lambda: voice.opens == 1)
+
+    conversation.device_lost("device-1")
+    assert hub.owner is None
+    open_gate.set()
+    assert conversation.request_wake("device-2")
+    await conversation.shutdown()
+    await asyncio.wait_for(run_task, timeout=1)
+
+    assert hub.notifications == []
+    assert hub.owner is None
+    assert conversation.gate.state is GateState.ASLEEP
+    assert voice.open_exits == 1
+
+
+@pytest.mark.asyncio
+async def test_shutdown_during_voice_open_cancels_open_and_releases_owner(tmp_path) -> None:
+    conversation, voice, hub = _make_conversation(
+        tmp_path,
+        open_gate=asyncio.Event(),
+        session=Session(wait_for_close=True),
+    )
+    run_task = asyncio.create_task(conversation.run())
+    assert conversation.request_wake("device-1")
+    await _wait_for(lambda: voice.opens == 1)
+
+    await asyncio.wait_for(conversation.shutdown(), timeout=1)
+    await asyncio.wait_for(run_task, timeout=1)
+
+    assert hub.owner is None
+    assert hub.notifications == []
+    assert conversation.gate.state is GateState.ASLEEP
+    assert voice.open_exits == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_conversation_run_during_voice_open_does_not_hang_or_keep_owner(tmp_path) -> None:
+    conversation, voice, hub = _make_conversation(
+        tmp_path,
+        open_gate=asyncio.Event(),
+        session=Session(wait_for_close=True),
+    )
+    run_task = asyncio.create_task(conversation.run())
+    assert conversation.request_wake("device-1")
+    await _wait_for(lambda: voice.opens == 1)
+
+    run_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(run_task, timeout=1)
+
+    assert hub.owner is None
+    assert hub.notifications == []
+    assert conversation.gate.state is GateState.ASLEEP
+    assert voice.open_exits == 1
     assert conversation.status().last_close_reason is None
 
 

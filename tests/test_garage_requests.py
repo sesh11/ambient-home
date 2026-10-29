@@ -77,10 +77,36 @@ async def test_mark_fixing_raises_for_garage_errors(status_code: int) -> None:
 
 
 def test_wants_is_repository_allowlisted() -> None:
-    log = HttpRequestLog("http://garage.test", frozenset({"owner/repo"}))
-    assert log.wants("owner/repo")
+    log = HttpRequestLog("http://garage.test", frozenset({"sesh11/ambient-home"}))
+    for repository in (
+        "sesh11/ambient-home",
+        "SESH11/Ambient-Home",
+        "https://github.com/sesh11/ambient-home.git",
+        "https://github.com/sesh11/ambient-home/",
+        "ambient-home",
+    ):
+        assert log.wants(repository)
     assert not log.wants("other/repo")
     assert not log.wants(None)
+    assert not log.wants("")
+
+
+@pytest.mark.asyncio
+async def test_file_preserves_job_repository_value() -> None:
+    repository = "https://github.com/sesh11/ambient-home.git"
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"issue": None})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await HttpRequestLog("http://garage.test", frozenset(), client=client).file(
+            Job(request="Fix issue", repository=repository)
+        )
+
+    payload = json.loads(requests[0].content)
+    assert payload["repository"] == repository
 
 
 def test_garage_token_is_optional_environment_setting(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -17,6 +17,7 @@ from numpy.typing import NDArray
 from ambient_device_sdk import (
     Device,
     ToolSpec,
+    EventSink,
     Capability,
     AudioFormat,
     DeviceConfig,
@@ -28,7 +29,6 @@ from ambient_device_sdk import (
 )
 from ambient_home.audio import PrerollBuffer, PcmStreamConverter, to_bytes
 from ambient_home.wake_word import WakeWordDetector
-from ambient_device_sdk.types import EventSink
 from ambient_home.connectors.voice.base import SAMPLE_RATE
 
 

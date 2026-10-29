@@ -20,7 +20,8 @@ costs. To configure devices, copy `devices.example.toml` to
 `~/.ambient-home/devices.toml` (or set `AMBIENT_DEVICES_FILE`) and install the
 corresponding device connector. Device connectors live in the
 [ambient-devices](https://github.com/sesh11/ambient-devices) project and can be
-developed independently against `ambient-device-sdk`. Device configuration
+developed independently against `ambient-device-sdk`; install `ambient-reachy`
+using the pin in that project's README for the current devices branch. Device configuration
 uses `[[devices]]` tables; `devices.example.toml` contains an optional
 Reachy Mini Lite example and its config keys.
 
@@ -42,6 +43,7 @@ Reachy Mini Lite example and its config keys.
 | `AMBIENT_MAX_SESSION_S` | `600` | Maximum session length |
 | `AMBIENT_DAILY_BUDGET_S` | `3600` | Daily Live audio budget |
 | `AMBIENT_DATA_DIR` | `~/.ambient-home` | Local jobs, spend, and device configuration |
+| `AMBIENT_MEMORY_FILE` | `$XDG_DATA_HOME/reachy_mini_conversation_app/memory.v1.json`, else `~/.local/share/reachy_mini_conversation_app/memory.v1.json` | Optional override for the persistent Alfred memory file |
 | `AMBIENT_DEVICES_FILE` | `<data dir>/devices.toml` | TOML device plugin configuration |
 | `AMBIENT_TRANSCRIPT_FINALIZE_S` | `1.0` | Transcript debounce interval |
 | `DEVIN_API_KEY` | unset | Devin service-user API key |
@@ -89,3 +91,19 @@ device project owns its daemon and device services.
 
 Run the test suite with `uv run pytest -q`. Real devices and provider APIs are
 not needed for tests; provider calls use fakes or HTTP mocks.
+
+### Testing a feature branch
+
+Use a separate worktree so the always-on checkout is never switched:
+
+```bash
+git -C ~/ambient-home fetch origin devin/1793294366-core-split
+git -C ~/ambient-home worktree add ~/ambient-home-core-split origin/devin/1793294366-core-split
+cd ~/ambient-home-core-split && uv sync
+```
+
+When finished, remove the feature worktree:
+
+```bash
+git -C ~/ambient-home worktree remove ~/ambient-home-core-split
+```

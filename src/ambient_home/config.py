@@ -24,6 +24,7 @@ class AmbientSettings:
     transcript_finalize_s: float
     profile: str = "alfred"
     profiles_dir: Path | None = None
+    memory_file: Path | None = None
     devices_file: Path = field(default_factory=lambda: Path("~/.ambient-home/devices.toml").expanduser())
     garage_url: str | None = None
     garage_token: str | None = None
@@ -97,6 +98,7 @@ def settings_from_env() -> AmbientSettings:
         transcript_finalize_s=_float_env("AMBIENT_TRANSCRIPT_FINALIZE_S", 1.0),
         profile=os.getenv("AMBIENT_PROFILE", "alfred"),
         profiles_dir=Path(profiles_dir).expanduser() if profiles_dir else None,
+        memory_file=Path(os.environ["AMBIENT_MEMORY_FILE"]).expanduser() if os.getenv("AMBIENT_MEMORY_FILE") else None,
         devices_file=Path(os.getenv("AMBIENT_DEVICES_FILE", str(data_dir / "devices.toml"))).expanduser(),
         garage_url=os.getenv("AMBIENT_GARAGE_URL") or None,
         garage_token=os.getenv("AMBIENT_GARAGE_TOKEN") or None,

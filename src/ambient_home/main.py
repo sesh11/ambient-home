@@ -17,6 +17,7 @@ from ambient_home import __version__
 from ambient_home.ui import create_app
 from ambient_home.costs import CostRates, CostTracker
 from ambient_home.config import AmbientSettings, settings_from_env
+from ambient_home.memory import memory_path
 from ambient_home.gateway import DeviceGateway, load_device_configs
 from ambient_home.persona import load_profile
 from ambient_home.spend_log import SpendLog
@@ -63,18 +64,35 @@ class App:
                     uptime_s=time.monotonic() - started_at,
                 )
 
+        tasks = [
+            asyncio.create_task(server.serve()),
+            asyncio.create_task(self.job_service.run_poller(self.settings.job_poll_s)),
+            asyncio.create_task(heartbeat()),
+            asyncio.create_task(self.gateway.run()),
+            asyncio.create_task(self.conversation.run()),
+        ]
+        failure: BaseException | None = None
         try:
-            await asyncio.gather(
-                server.serve(),
-                self.job_service.run_poller(self.settings.job_poll_s),
-                heartbeat(),
-                self.gateway.run(),
-                self.conversation.run(),
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            failure = next(
+                (task.exception() for task in done if not task.cancelled() and task.exception() is not None),
+                None,
             )
         finally:
-            await self.conversation.shutdown()
-            await self.gateway.stop()
-            configure(None)
+            server.should_exit = True
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                await self.conversation.shutdown()
+            finally:
+                try:
+                    await self.gateway.stop()
+                finally:
+                    configure(None)
+        if failure is not None:
+            raise failure
 
 
 def build_app(settings: AmbientSettings) -> App:
@@ -151,6 +169,7 @@ def build_app(settings: AmbientSettings) -> App:
         jobs,
         costs,
         lambda: gate.request_close(CloseReason.USER_DISMISSED),
+        memory_path(settings),
     )
     conversation = Conversation(
         settings,
@@ -170,6 +189,7 @@ def build_app(settings: AmbientSettings) -> App:
         conversation.request_stop,
         costs,
         devices=gateway.status,
+        event_log=event_log,
     )
     emit(
         "app.started",

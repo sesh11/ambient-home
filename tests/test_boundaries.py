@@ -27,6 +27,7 @@ def test_openai_imports_are_limited_to_connectors() -> None:
             name.startswith(("ambient_home.factory", "ambient_home.incidents", "ambient_home.telemetry"))
             for name in imports
         )
+        assert not any(name.startswith("ambient_device_sdk.") for name in imports)
 
     pyproject = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     dependencies = [*pyproject["project"]["dependencies"], *pyproject["dependency-groups"]["dev"]]

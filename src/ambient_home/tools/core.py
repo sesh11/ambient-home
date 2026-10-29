@@ -1,17 +1,25 @@
 """Provider-neutral core tools."""
 
+import asyncio
+import logging
+from pathlib import Path
 from datetime import datetime
 from collections.abc import Callable
 
 from ambient_device_sdk import ToolSpec
 from ambient_home.costs import CostTracker, spoken_summary
+from ambient_home.memory import add_memory_fact, forget_memory_fact
 from ambient_home.jobs.service import JobService
+
+
+logger = logging.getLogger(__name__)
 
 
 def build_core_tools(
     job_service: JobService,
     cost_tracker: CostTracker,
     request_close: Callable[[], None],
+    memory_file: Path,
 ) -> list[ToolSpec]:
     """Build the core tools with their exact model-facing schemas."""
 
@@ -55,6 +63,41 @@ def build_core_tools(
         request_close()
         return {"status": "close_requested", "reason": "user_dismissed"}
 
+    async def remember(arguments: dict[str, object]) -> dict[str, object]:
+        fact = arguments.get("fact")
+        if not isinstance(fact, str) or not fact.strip():
+            logger.warning("remember: empty fact")
+            return {"error": "fact must be a non-empty string"}
+
+        stored = await asyncio.to_thread(add_memory_fact, memory_file, fact)
+        if stored is None:
+            return {"error": "fact was empty or invalid; nothing was saved"}
+
+        logger.info("Tool call: remember memory_id=%s", stored.id)
+        return {"saved": stored.text, "memory_id": stored.id}
+
+    async def forget(arguments: dict[str, object]) -> dict[str, object]:
+        query = arguments.get("query")
+        if not isinstance(query, str) or not query.strip():
+            logger.warning("forget: empty query")
+            return {"error": "query must be a non-empty string"}
+
+        result = await asyncio.to_thread(forget_memory_fact, memory_file, query=query)
+        if result.removed is None:
+            logger.info("Tool call: forget no_match")
+            return {"error": f'no memory matched "{query}"; nothing was removed'}
+
+        response: dict[str, object] = {"removed": result.removed.text, "memory_id": result.removed.id}
+        if len(result.candidates) > 1:
+            response["other_matches"] = [fact.text for fact in result.candidates[1:]]
+        logger.info("Tool call: forget memory_id=%s other_matches=%s", result.removed.id, len(result.candidates) - 1)
+        return response
+
+    async def idle_do_nothing(arguments: dict[str, object]) -> dict[str, object]:
+        reason = arguments.get("reason", "idle turn")
+        logger.info("Tool call: idle_do_nothing")
+        return {"status": "idle", "reason": reason}
+
     return [
         ToolSpec(
             "dispatch_job",
@@ -96,5 +139,67 @@ def build_core_tools(
             "Use when the user is done: 'that's all', 'go to sleep', or 'thanks, that's it'.",
             {"type": "object", "properties": {}},
             end_conversation,
+        ),
+        ToolSpec(
+            "remember",
+            (
+                "Save ONE short fact about the user to long-term memory so it is available in future sessions. "
+                "Use this for stable user information they explicitly shared: name, preferences, hobbies, recurring projects, "
+                "important people, or plans. Keep each fact atomic and under one sentence. Do not save sensitive data "
+                "(passwords, addresses, payment info, health diagnoses) or fleeting details. Use this silently in the "
+                'background; acknowledge naturally without saying "I will remember that".'
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "fact": {
+                        "type": "string",
+                        "description": (
+                            "A short, third-person statement about the user, such as "
+                            '"Has a dog named Mochi" or "Prefers replies in French". One fact per call.'
+                        ),
+                    }
+                },
+                "required": ["fact"],
+            },
+            remember,
+        ),
+        ToolSpec(
+            "forget",
+            (
+                "Remove a previously saved fact from long-term memory. Call this when the user asks you to forget something, "
+                "or when saved information becomes obsolete. Match by a specific free-text phrase present in the fact."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "A short search phrase that should be present in the fact to remove. Matching is case-insensitive."
+                        ),
+                    }
+                },
+                "required": ["query"],
+            },
+            forget,
+        ),
+        ToolSpec(
+            "idle_do_nothing",
+            (
+                "Use only in response to an idle time update when you intentionally want Reachy to stay still and silent "
+                "instead of choosing another idle action."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Optional reason for staying idle during this idle turn.",
+                    }
+                },
+                "required": [],
+            },
+            idle_do_nothing,
         ),
     ]

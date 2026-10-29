@@ -1,5 +1,5 @@
 # Copy this file to ~/.ambient-home/devices.toml and install the connector.
-# pip/uv: ambient-reachy @ git+https://github.com/sesh11/ambient-devices.git@acacfde0d7ac0d515ada68f376cfc715f75361b4#subdirectory=packages/ambient-reachy
+# Install ambient-reachy using the pin in the sesh11/ambient-devices README / current devices branch.
 # [[devices]]
 # id = "reachy"
 # kind = "reachy-mini-lite"

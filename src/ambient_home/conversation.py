@@ -16,6 +16,7 @@ from numpy.typing import NDArray
 from ambient_device_sdk import ToolSpec, SessionState
 from ambient_home.audio import to_bytes
 from ambient_home.config import AmbientSettings
+from ambient_home.memory import memory_path, format_memory_for_prompt
 from ambient_home.persona import DEFAULT_GREETING_PROMPT, Profile
 from ambient_home.spend_log import SpendLog, SpendRecord
 from ambient_home.session_gate import GateState, CloseReason, SessionGate
@@ -127,6 +128,8 @@ class Conversation:
         self._tool_tasks: set[asyncio.Task[None]] = set()
         self._in_flight_tool_calls: set[str] = set()
         self._active_tools: dict[str, ToolSpec] = {}
+        self._opening_device: str | None = None
+        self._opening_task: asyncio.Task[None] | None = None
         self._listening = False
         self._speaking = False
 
@@ -140,6 +143,12 @@ class Conversation:
 
     def device_lost(self, device_id: str) -> None:
         """Close the conversation if its owner device is lost."""
+        if self._opening_device == device_id and self._session is None:
+            self._opening_device = None
+            if self._opening_task is not None:
+                self._opening_task.cancel()
+            self.hub.release(device_id)
+            return
         if self._pending_device == device_id:
             self._pending_device = None
             self._wake_event.clear()
@@ -179,10 +188,15 @@ class Conversation:
                 emit("live.missing_api_key", "live", "error")
                 self.hub.release(device_id)
                 continue
+            opening_task = asyncio.create_task(self._run_session(device_id))
+            self._opening_device = device_id
+            self._opening_task = opening_task
             try:
-                await self._run_session(device_id)
+                await opening_task
             except asyncio.CancelledError:
-                raise
+                current_task = asyncio.current_task()
+                if not opening_task.cancelled() or (current_task is not None and current_task.cancelling()):
+                    raise
             except VoiceStartupTimeout:
                 self.hub.release(device_id)
             except VoiceConnectionLost as exc:
@@ -199,6 +213,13 @@ class Conversation:
                     self.gate.close(CloseReason.ERROR)
                 self.hub.release(device_id)
                 await asyncio.sleep(2.0)
+            finally:
+                if self._opening_task is opening_task:
+                    self._opening_task = None
+                if self._opening_device == device_id:
+                    self._opening_device = None
+                if opening_task.cancelled() and self._session is None:
+                    self.hub.release(device_id)
 
     async def _run_session(self, device_id: str) -> None:
         self._last_server_reason = None
@@ -210,8 +231,14 @@ class Conversation:
         owner_tools = self.hub.owner_tools()
         selected = self._select_tools(owner_tools, device_id)
         self._active_tools = {tool.name: tool for tool in selected}
+        memory = await asyncio.to_thread(format_memory_for_prompt, memory_path(self.settings))
+        instructions = (
+            f"{memory}\n\n{self.profile.instructions}\n\n{_ADDENDUM}"
+            if memory
+            else f"{self.profile.instructions}\n\n{_ADDENDUM}"
+        )
         config = VoiceSessionConfig(
-            instructions=f"{self.profile.instructions}\n\n{_ADDENDUM}",
+            instructions=instructions,
             voice=self.get_current_voice(),
             tools=[tool.schema() for tool in selected],
         )
@@ -365,7 +392,8 @@ class Conversation:
                 logger.error("Tool %s failed (%s)", name, type(exc).__name__)
         if "error" in result:
             error_text = str(result["error"])
-            emit("tool.completed", "live", "error", tool=name, ok=False, error=error_text)
+            event_error = "memory tool failed" if name in {"remember", "forget"} else error_text
+            emit("tool.completed", "live", "error", tool=name, ok=False, error=event_error)
             return {"error": error_text}
         emit("tool.completed", "live", tool=name, ok=True)
         return result
@@ -477,7 +505,17 @@ class Conversation:
     async def shutdown(self) -> None:
         """Wake and stop the session loop."""
         self._shutdown_event.set()
+        pending_device = self._pending_device
+        self._pending_device = None
         self._wake_event.set()
+        if pending_device is not None:
+            self.hub.release(pending_device)
+        opening_task = self._opening_task
+        if opening_task is not None and self._session is None:
+            opening_task.cancel()
+            await asyncio.gather(opening_task, return_exceptions=True)
+            if self._opening_device is not None:
+                self.hub.release(self._opening_device)
         if self._session is not None:
             await self._session.close()
         for task in (
