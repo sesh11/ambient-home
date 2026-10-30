@@ -9,8 +9,11 @@ def test_loads_packaged_alfred_profile() -> None:
     profile = load_profile()
     assert profile.voice == "ballad"
     assert "end_conversation" in profile.tools
+    assert "file_request" in profile.tools
     assert "dispatch_job" in profile.tools
     assert "Alfred" in profile.instructions
+    assert "`file_request`" in profile.instructions
+    assert "only when the user explicitly asks you to start a coding session directly" in profile.instructions
     assert profile.greeting == "Good day, sir. How may I be of service?"
 
 

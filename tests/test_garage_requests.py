@@ -12,20 +12,29 @@ from ambient_home.connectors.garage_requests import HttpRequestLog
 
 
 @pytest.mark.asyncio
-async def test_file_and_mark_fixing_use_expected_paths_and_payload() -> None:
+async def test_file_and_status_use_expected_paths_and_payload() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.url.path == "/api/requests":
             return httpx.Response(200, json={"issue": {"number": 42, "url": "https://example.test/42"}})
-        return httpx.Response(200, json={"ok": True})
+        return httpx.Response(
+            200,
+            json={
+                "number": 42,
+                "dispatch": True,
+                "state": "working",
+                "session_url": "https://app.devin.ai/sessions/42",
+                "pr_url": None,
+            },
+        )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         log = HttpRequestLog("http://garage.test/", frozenset({"owner/repo"}), client=client)
         job = Job(request="Fix the issue", repository="owner/repo")
         record = await log.file(job)
-        await log.mark_fixing(42)
+        status = await log.status(42)
 
     assert record is not None
     assert record.number == 42
@@ -40,25 +49,33 @@ async def test_file_and_mark_fixing_use_expected_paths_and_payload() -> None:
         "repository": job.repository,
     }
     assert datetime.fromisoformat(payload["created_at"]).utcoffset() is not None
-    assert requests[1].url.path == "/api/requests/42/fixing"
+    assert requests[1].method == "GET"
+    assert requests[1].url.path == "/api/requests/42"
+    assert status == {
+        "number": 42,
+        "dispatch": True,
+        "state": "working",
+        "session_url": "https://app.devin.ai/sessions/42",
+        "pr_url": None,
+    }
     assert "authorization" not in requests[0].headers
     assert "authorization" not in requests[1].headers
 
 
 @pytest.mark.asyncio
-async def test_bearer_token_is_sent_on_both_requests() -> None:
+async def test_bearer_token_is_sent_on_file_and_status_requests() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.url.path == "/api/requests":
             return httpx.Response(200, json={"issue": None})
-        return httpx.Response(200, json={"ok": True})
+        return httpx.Response(200, json={"state": "queued"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         log = HttpRequestLog("http://garage.test", frozenset(), client=client, token="test-token")
         await log.file(Job(request="Fix the issue"))
-        await log.mark_fixing(42)
+        await log.status(42)
 
     assert len(requests) == 2
     assert all(request.headers["authorization"] == "Bearer test-token" for request in requests)
@@ -66,14 +83,14 @@ async def test_bearer_token_is_sent_on_both_requests() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code", [409, 502])
-async def test_mark_fixing_raises_for_garage_errors(status_code: int) -> None:
+async def test_status_raises_for_garage_errors(status_code: int) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(status_code, json={"error": "request could not be updated"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         log = HttpRequestLog("http://garage.test", frozenset(), client=client)
         with pytest.raises(httpx.HTTPStatusError):
-            await log.mark_fixing(42)
+            await log.status(42)
 
 
 def test_wants_is_repository_allowlisted() -> None:

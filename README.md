@@ -50,9 +50,9 @@ Reachy Mini Lite example and its config keys.
 | `DEVIN_ORG_ID` | unset | Devin organization ID |
 | `DEVIN_API_BASE_URL` | `https://api.devin.ai` | Devin API base URL |
 | `AMBIENT_DEVIN_MAX_ACU` | `5` | Maximum ACUs per Devin session |
-| `AMBIENT_GARAGE_URL` | unset | Enables optional request filing; local Garage defaults to `http://127.0.0.1:8770` |
+| `AMBIENT_GARAGE_URL` | unset | Required for Alfred to file software work with Garage; local Garage defaults to `http://127.0.0.1:8770` |
 | `AMBIENT_GARAGE_TOKEN` | unset | Optional bearer token for the local Garage service |
-| `AMBIENT_GARAGE_REPOS` | `sesh11/ambient-home` | Repositories whose jobs are filed with Garage |
+| `AMBIENT_GARAGE_REPOS` | `sesh11/ambient-home` | Repositories Garage handles for Alfred |
 | `AMBIENT_EVENT_RESOURCE` | `false` | Add local install/version identity to events |
 | `AMBIENT_EVENTS_DIR` | `~/Library/Logs/ambient-home/events` | Local JSONL event directory |
 | `AMBIENT_EVENT_RETENTION_DAYS` | `14` | Event retention |
@@ -70,8 +70,11 @@ Reachy Mini Lite example and its config keys.
 Wake-word detection, the device gateway, session limits, and the status UI run
 locally. The core writes structured events to Garage SDK's local JSONL event
 store. Events contain operational metadata; transcripts, audio, Live payloads,
-and request text are not logged. When configured, Garage receives job requests
-for the selected repositories. Devin receives a job only when one is dispatched.
+and request text are not logged. With `AMBIENT_GARAGE_URL` configured, Alfred
+files software-engineering work with Garage by default and Garage dispatches
+the work. `dispatch_job` starts a direct coding session only when the user
+explicitly asks for one. If Garage is not configured or cannot accept a request,
+Alfred tells the user and asks before starting a direct session.
 
 Jobs are PR-only: Devin must not merge, push directly to `main`/`master`, deploy,
 or change branch protection or CI security settings. No secrets are shared with

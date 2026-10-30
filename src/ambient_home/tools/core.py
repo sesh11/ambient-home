@@ -9,7 +9,7 @@ from collections.abc import Callable
 from ambient_device_sdk import ToolSpec
 from ambient_home.costs import CostTracker, spoken_summary
 from ambient_home.memory import add_memory_fact, forget_memory_fact
-from ambient_home.jobs.service import JobService
+from ambient_home.jobs.service import JobService, RequestNotFiled
 
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,41 @@ def build_core_tools(
     memory_file: Path,
 ) -> list[ToolSpec]:
     """Build the core tools with their exact model-facing schemas."""
+
+    async def file_request(arguments: dict[str, object]) -> dict[str, object]:
+        request_value = arguments.get("request")
+        if not isinstance(request_value, str) or not request_value.strip():
+            return {
+                "error": (
+                    "request must be a non-empty string. Tell the user. "
+                    "Only start a coding session directly if they ask you to."
+                )
+            }
+        repository_value = arguments.get("repository")
+        repository = str(repository_value).strip() if repository_value is not None else None
+        try:
+            job = await job_service.file_request(request_value.strip(), repository or None)
+        except RequestNotFiled as exc:
+            messages = {
+                "not_configured": "Garage is not set up, so nothing was filed.",
+                "not_covered": "Garage doesn't cover that repository, so nothing was filed.",
+                "declined": "Garage did not file it (request filing is off or today's limit is reached).",
+                "failed": "Garage could not file the request.",
+            }
+            return {
+                "error": (
+                    f"{messages[exc.reason]} Tell the user. Only start a coding session directly if they ask you to."
+                )
+            }
+        return {
+            "job_id": job.id,
+            "status": "filed",
+            "issue_number": job.issue_number,
+            "issue_url": job.issue_url,
+            "message": (
+                f"Filed as issue #{job.issue_number}. Garage will start on it and I'll tell you when the PR is up."
+            ),
+        }
 
     async def dispatch_job(arguments: dict[str, object]) -> dict[str, object]:
         request = str(arguments.get("request", "")).strip()
@@ -51,6 +86,8 @@ def build_core_tools(
         job = await job_service.answer(job_id, answer)
         if job is None:
             return {"error": "unknown job"}
+        if job.worker == "garage" and job.error:
+            return {"error": job.error}
         return {"job_id": job.id, "status": job.status.value}
 
     async def spend_report(_: dict[str, object]) -> dict[str, object]:
@@ -100,8 +137,27 @@ def build_core_tools(
 
     return [
         ToolSpec(
+            "file_request",
+            (
+                "Default for ALL software engineering work (code changes, bug fixes, features, pull requests): "
+                "file it in Garage's work queue as a GitHub issue. Garage starts the coding session. Use this unless "
+                "the user explicitly asks you to start a coding session yourself."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "request": {"type": "string"},
+                    "repository": {"type": "string", "description": "GitHub owner/name"},
+                },
+                "required": ["request"],
+            },
+            file_request,
+        ),
+        ToolSpec(
             "dispatch_job",
-            "Hand off a software engineering task (code change, bug fix, new feature, PR) to the remote engineering agent. Returns immediately.",
+            "Start a remote coding session directly, bypassing Garage. ONLY when the user explicitly asks you to start "
+            "or kick off a coding session (for example 'start a Devin session for this'). For all other software "
+            "engineering work use file_request.",
             {
                 "type": "object",
                 "properties": {

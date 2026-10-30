@@ -6,13 +6,20 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ambient_home.tools.core import build_core_tools
+from ambient_home.jobs.service import RequestNotFiled
 
 
 @pytest.mark.asyncio
 async def test_tool_names_schemas_and_results(monkeypatch, tmp_path) -> None:
     dispatched = SimpleNamespace(id="job-1")
-    answered = SimpleNamespace(id="job-1", status=SimpleNamespace(value="working"))
+    filed = SimpleNamespace(
+        id="garage-job",
+        issue_number=42,
+        issue_url="https://github.com/sesh11/ambient-home/issues/42",
+    )
+    answered = SimpleNamespace(id="job-1", status=SimpleNamespace(value="working"), worker="devin", error=None)
     jobs = SimpleNamespace(
+        file_request=AsyncMock(return_value=filed),
         dispatch=AsyncMock(return_value=dispatched),
         answer=AsyncMock(return_value=answered),
         status_summary=lambda: [{"id": "job-1", "status": "working"}],
@@ -26,6 +33,7 @@ async def test_tool_names_schemas_and_results(monkeypatch, tmp_path) -> None:
     tools = {tool.name: tool for tool in build_core_tools(jobs, costs, close, tmp_path / "memory.json")}
 
     assert set(tools) == {
+        "file_request",
         "dispatch_job",
         "job_status",
         "answer_job",
@@ -35,7 +43,21 @@ async def test_tool_names_schemas_and_results(monkeypatch, tmp_path) -> None:
         "forget",
         "idle_do_nothing",
     }
+    assert tools["file_request"].schema()["parameters"]["required"] == ["request"]
+    assert (
+        tools["file_request"].schema()["parameters"]["properties"]["repository"]["description"] == "GitHub owner/name"
+    )
+    assert "Default for ALL software engineering work" in tools["file_request"].schema()["description"]
+    assert await tools["file_request"].handler({"request": "Fix issue", "repository": "sesh11/ambient-home"}) == {
+        "job_id": "garage-job",
+        "status": "filed",
+        "issue_number": 42,
+        "issue_url": "https://github.com/sesh11/ambient-home/issues/42",
+        "message": "Filed as issue #42. Garage will start on it and I'll tell you when the PR is up.",
+    }
+    assert jobs.file_request.await_args.args == ("Fix issue", "sesh11/ambient-home")
     assert tools["dispatch_job"].schema()["parameters"]["required"] == ["request"]
+    assert "ONLY when the user explicitly asks" in tools["dispatch_job"].schema()["description"]
     assert await tools["dispatch_job"].handler({"request": "Fix issue"}) == {
         "job_id": "job-1",
         "status": "dispatched",
@@ -48,6 +70,48 @@ async def test_tool_names_schemas_and_results(monkeypatch, tmp_path) -> None:
     }
     assert (await tools["spend_report"].handler({}))["speech"] == "$1.00"
     assert await tools["dispatch_job"].handler({"request": " "}) == {"error": "request must be a non-empty string"}
+    empty_request = await tools["file_request"].handler({"request": " "})
+    assert empty_request == {
+        "error": (
+            "request must be a non-empty string. Tell the user. "
+            "Only start a coding session directly if they ask you to."
+        )
+    }
+    assert jobs.file_request.await_count == 1
+
+    garage_error = SimpleNamespace(
+        id="garage-job",
+        status=SimpleNamespace(value="working"),
+        worker="garage",
+        error="This request is handled by Garage; answer in its Devin session or GitHub issue.",
+    )
+    jobs.answer.return_value = garage_error
+    assert await tools["answer_job"].handler({"job_id": "garage-job", "answer": "Proceed"}) == {
+        "error": garage_error.error
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "message"),
+    [
+        ("not_configured", "Garage is not set up, so nothing was filed."),
+        ("not_covered", "Garage doesn't cover that repository, so nothing was filed."),
+        ("declined", "Garage did not file it (request filing is off or today's limit is reached)."),
+        ("failed", "Garage could not file the request."),
+    ],
+)
+async def test_file_request_errors_recommend_asking_before_direct_dispatch(tmp_path, reason, message) -> None:
+    jobs = SimpleNamespace(file_request=AsyncMock(side_effect=RequestNotFiled(reason)))
+    tool = next(
+        tool
+        for tool in build_core_tools(jobs, SimpleNamespace(), lambda: None, tmp_path / "memory.json")
+        if tool.name == "file_request"
+    )
+
+    result = await tool.handler({"request": "Fix issue"})
+
+    assert result == {"error": f"{message} Tell the user. Only start a coding session directly if they ask you to."}
 
 
 @pytest.mark.asyncio

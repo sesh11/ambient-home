@@ -53,12 +53,14 @@ class HttpRequestLog:
             return None
         return RequestRecord(number=int(issue["number"]), url=str(issue["url"]))
 
-    async def mark_fixing(self, number: int) -> None:
-        """Mark one Garage request as being fixed."""
-        response = await self._request("POST", f"/api/requests/{number}/fixing")
+    async def status(self, number: int) -> dict[str, object]:
+        """Read the dispatch status for one Garage request."""
+        response = await self._request("GET", f"/api/requests/{number}")
         response.raise_for_status()
-        if response.json() != {"ok": True}:
-            raise ValueError("Garage did not acknowledge fixing state")
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("Garage returned an invalid request status")
+        return payload
 
     async def _request(self, method: str, path: str, *, payload: dict[str, object] | None = None) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self.token}"} if self.token is not None else {}
