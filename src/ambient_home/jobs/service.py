@@ -2,33 +2,51 @@
 
 import asyncio
 import logging
-from typing import Protocol
+from typing import Literal, Protocol
+from dataclasses import dataclass
 from collections.abc import Callable, Awaitable
 
-from ambient_home.telemetry import emit
+from garage_sdk import emit
+
 from ambient_home.jobs.board import Job, JobBoard, JobStatus
-from ambient_home.jobs.worker import Worker
-from ambient_home.factory.github import IssueRecord
+from ambient_home.connectors.coding.worker import Worker
 
 
 logger = logging.getLogger(__name__)
 Announcer = Callable[[str], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class RequestRecord:
+    """Garage request number and URL."""
+
+    number: int
+    url: str
+
+
 class RequestLog(Protocol):
-    """Records voice requests somewhere durable (a GitHub issue) before work starts."""
+    """Files requests with Garage and reads their dispatch status."""
 
     def wants(self, repository: str | None) -> bool:
         """Return whether requests for this repository should be recorded."""
         ...
 
-    async def file(self, job: Job) -> IssueRecord | None:
+    async def file(self, job: Job) -> RequestRecord | None:
         """Record the request and return the created issue, if any."""
         ...
 
-    async def mark_fixing(self, number: int) -> None:
-        """Mark the recorded request as being worked on."""
+    async def status(self, number: int) -> dict[str, object]:
+        """Return dispatch state and URLs for a filed request."""
         ...
+
+
+class RequestNotFiled(Exception):
+    """A Garage request could not be filed for a known reason."""
+
+    def __init__(self, reason: Literal["not_configured", "not_covered", "declined", "failed"]) -> None:
+        """Store the reason that filing did not produce an issue."""
+        self.reason = reason
+        super().__init__(reason)
 
 
 class JobService:
@@ -55,39 +73,38 @@ class JobService:
         asyncio.create_task(self._start(job), name=f"job-start-{job.id}")
         return job
 
-    async def _file_request(self, job: Job) -> None:
-        if self.request_log is None or not self.request_log.wants(job.repository):
-            return
+    async def file_request(self, request: str, repository: str | None) -> Job:
+        """File a software request with Garage and track it until dispatch completes."""
+        if self.request_log is None:
+            raise RequestNotFiled("not_configured")
+        if not self.request_log.wants(repository):
+            raise RequestNotFiled("not_covered")
+        job = Job(request=request, repository=repository, worker="garage", status=JobStatus.queued)
         try:
             issue = await self.request_log.file(job)
         except Exception as exc:
-            logger.exception("Could not file a GitHub issue for job %s", job.id)
+            logger.error("Could not file a Garage request for job %s (%s)", job.id, type(exc).__name__)
             emit(
-                "factory.report_failed", "factory", "error", job_id=job.id, exc_type=type(exc).__name__, error=str(exc)
+                "factory.report_failed",
+                "factory",
+                "error",
+                op="file",
+                job_id=job.id,
+                exc_type=type(exc).__name__,
             )
-            return
-        if issue is not None:
-            job.issue_number = issue.number
-            job.issue_url = issue.url
-            self.board.update(job)
-
-    async def _mark_fixing(self, job: Job) -> None:
-        if self.request_log is None or job.issue_number is None or job.status is not JobStatus.working:
-            return
-        try:
-            await self.request_log.mark_fixing(job.issue_number)
-        except Exception as exc:
-            logger.exception("Could not relabel issue #%s for job %s", job.issue_number, job.id)
-            emit(
-                "factory.report_failed", "factory", "error", job_id=job.id, exc_type=type(exc).__name__, error=str(exc)
-            )
+            raise RequestNotFiled("failed") from exc
+        if issue is None:
+            raise RequestNotFiled("declined")
+        job.issue_number = issue.number
+        job.issue_url = issue.url
+        self.board.add(job)
+        emit("garage.request_filed", "jobs", job_id=job.id, issue=issue.number)
+        return job
 
     async def _start(self, job: Job) -> None:
-        await self._file_request(job)
         try:
             updated = await self.worker.start(job)
             self.board.update(updated)
-            await self._mark_fixing(updated)
         except Exception as exc:
             logger.exception("Failed to start job %s", job.id)
             emit("job.start_failed", "jobs", "error", job_id=job.id, exc_type=type(exc).__name__, error=str(exc))
@@ -100,6 +117,10 @@ class JobService:
         job = self.board.get(job_id)
         if job is None:
             return None
+        if job.worker == "garage":
+            job.error = "This request is handled by Garage; answer in its Devin session or GitHub issue."
+            self.board.update(job)
+            return job
         try:
             await self.worker.answer(job, answer)
             self.board.update(job)
@@ -117,6 +138,8 @@ class JobService:
                 "id": job.id,
                 "status": job.status.value,
                 "request": job.request,
+                "worker": job.worker,
+                "worker_url": job.worker_url,
                 "pr_url": job.pr_url,
                 "issue_url": job.issue_url,
                 "question": job.question,
@@ -131,21 +154,60 @@ class JobService:
         while True:
             try:
                 for job in self.board.open_jobs():
-                    if job.status not in {JobStatus.working, JobStatus.blocked}:
-                        continue
-                    before = job.model_dump()
-                    previous_status = job.status
-                    refreshed = await self.worker.refresh(job)
-                    if refreshed.model_dump() != before:
-                        self.board.update(refreshed)
-                    if refreshed.status is not previous_status:
-                        emit(
-                            "job.status_changed",
-                            "jobs",
-                            job_id=job.id,
-                            status=refreshed.status.value,
-                            acus_consumed=refreshed.acus_consumed,
-                        )
+                    if job.worker == self.worker.name:
+                        if job.status not in {JobStatus.working, JobStatus.blocked}:
+                            continue
+                        before = job.model_dump()
+                        previous_status = job.status
+                        refreshed = await self.worker.refresh(job)
+                        if refreshed.model_dump() != before:
+                            self.board.update(refreshed)
+                        if refreshed.status is not previous_status:
+                            emit(
+                                "job.status_changed",
+                                "jobs",
+                                job_id=job.id,
+                                status=refreshed.status.value,
+                                acus_consumed=refreshed.acus_consumed,
+                            )
+                    elif (
+                        job.worker == "garage"
+                        and job.status in {JobStatus.queued, JobStatus.working}
+                        and job.issue_number is not None
+                        and self.request_log is not None
+                    ):
+                        before = job.model_dump()
+                        previous_garage_status = job.status
+                        try:
+                            state = await self.request_log.status(job.issue_number)
+                            status_names = {
+                                "queued": JobStatus.queued,
+                                "working": JobStatus.working,
+                                "finished": JobStatus.finished,
+                                "failed": JobStatus.failed,
+                                "expired": JobStatus.expired,
+                            }
+                            state_name = state.get("state")
+                            if isinstance(state_name, str) and state_name in status_names:
+                                job.status = status_names[state_name]
+                            session_url = state.get("session_url")
+                            job.worker_url = session_url if isinstance(session_url, str) else None
+                            pr_url = state.get("pr_url")
+                            job.pr_url = pr_url if isinstance(pr_url, str) else None
+                            if job.model_dump() != before:
+                                self.board.update(job)
+                            if job.status is not previous_garage_status:
+                                emit(
+                                    "job.status_changed",
+                                    "jobs",
+                                    job_id=job.id,
+                                    status=job.status.value,
+                                    acus_consumed=job.acus_consumed,
+                                )
+                        except Exception as exc:
+                            logger.error(
+                                "Could not refresh Garage request #%s (%s)", job.issue_number, type(exc).__name__
+                            )
                 for job in self.board.unannounced():
                     await self.announcer(self._announcement(job))
                     self.board.mark_announced(job)
