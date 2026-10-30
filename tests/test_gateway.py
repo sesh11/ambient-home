@@ -275,6 +275,42 @@ def test_preroll_only_receives_non_streaming_owner_audio() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wake_ready_requires_successful_detector_input_and_is_emitted_once(monkeypatch) -> None:
+    records = _record_events(monkeypatch)
+    config = _configs("fake")[0]
+
+    class Detector(ScriptedDetector):
+        def feed(self, samples: np.ndarray) -> bool:
+            records.append((("detector.fed",), {}))
+            return super().feed(samples)
+
+    gateway = DeviceGateway([config], wake_detector_factory=Detector, preroll_seconds=1, describe_image=None)
+    gateway.set_listener(Listener())
+    entry = _DeviceEntry(config, FakeDevice(DeviceContext(config.id)), preroll=PrerollBuffer(1, 16_000))
+    assert not _events(records, "wake.ready")
+    await gateway._route_audio(entry, np.zeros(1280, dtype=np.int16))
+    await gateway._route_audio(entry, np.zeros(1280, dtype=np.int16))
+    assert [record[0][0] for record in records] == ["detector.fed", "wake.ready", "detector.fed"]
+    assert _events(records, "wake.ready")[0][1] == {"device": config.id}
+
+
+@pytest.mark.asyncio
+async def test_failed_wake_model_does_not_emit_readiness(monkeypatch) -> None:
+    records = _record_events(monkeypatch)
+    config = _configs("fake")[0]
+
+    def missing_model():
+        raise FileNotFoundError("missing feature model")
+
+    gateway = DeviceGateway([config], wake_detector_factory=missing_model, preroll_seconds=1, describe_image=None)
+    gateway.set_listener(Listener())
+    entry = _DeviceEntry(config, FakeDevice(DeviceContext(config.id)), preroll=PrerollBuffer(1, 16_000))
+    with pytest.raises(FileNotFoundError):
+        await gateway._route_audio(entry, np.zeros(1280, dtype=np.int16))
+    assert not _events(records, "wake.ready")
+
+
+@pytest.mark.asyncio
 async def test_owner_mic_end_reports_loss_stops_and_reconnects(monkeypatch) -> None:
     records = _record_events(monkeypatch)
 
@@ -314,7 +350,7 @@ async def test_owner_mic_end_reports_loss_stops_and_reconnects(monkeypatch) -> N
     )
     gateway.set_listener(listener)
     task = asyncio.create_task(gateway.run())
-    await _wait_for(lambda: len(_events(records, "device.connected")) >= 2)
+    await _wait_for(lambda: len(_events(records, "wake.ready")) >= 2)
     dropped = _events(records, "device.dropped")
     assert dropped[0][1] == {"device": "device-0", "reason": "mic_ended"}
     assert listener.lost == ["device-0"]

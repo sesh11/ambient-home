@@ -71,6 +71,7 @@ class _DeviceEntry:
     silence_logged: bool = False
     heartbeat_at: float = 0.0
     peak_rms: float = 0.0
+    wake_ready: bool = False
 
 
 class DeviceGateway:
@@ -184,6 +185,7 @@ class DeviceGateway:
                 retry_index = min(retry_index + 1, len(self.reconnect_delays) - 1)
                 continue
             entry.state = "connected"
+            entry.wake_ready = False
             entry.converter = (
                 PcmStreamConverter(entry.device.mic_format, SAMPLE_RATE)
                 if Capability.LISTEN in entry.device.capabilities and entry.device.mic_format is not None
@@ -284,6 +286,9 @@ class DeviceGateway:
             entry.detector = self.wake_detector_factory()
         entry.peak_rms = max(entry.peak_rms, float(np.sqrt(np.mean(np.square(mono, dtype=np.float32)))))
         detected = entry.detector.feed(mono)
+        if not entry.wake_ready:
+            entry.wake_ready = True
+            emit("wake.ready", "gateway", device=entry.config.id)
         if detected:
             if self.owner is None and self.listener.request_wake(entry.config.id):
                 self.owner = entry.config.id
