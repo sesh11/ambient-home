@@ -4,6 +4,7 @@ import os
 import time
 import asyncio
 import logging
+import argparse
 from datetime import datetime
 from dataclasses import dataclass
 
@@ -211,8 +212,15 @@ def build_app(settings: AmbientSettings) -> App:
     return App(ui, gateway, conversation, jobs, settings)
 
 
-def main() -> None:
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ambient-home", description="Run the ambient-home voice assistant hub.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
     """Load environment settings and run the ambient-home hub."""
+    _parser().parse_args(argv)
     load_dotenv()
     log_level = logging.getLevelNamesMapping().get(os.getenv("AMBIENT_LOG_LEVEL", "INFO").upper(), logging.INFO)
     logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
