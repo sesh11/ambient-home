@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from ambient_home.jobs.board import Job, JobStatus
-from ambient_home.jobs.devin import DevinWorker
+from ambient_home.connectors.coding.devin import DevinWorker
 
 
 @pytest.mark.asyncio

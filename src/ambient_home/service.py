@@ -1,4 +1,4 @@
-"""Install ambient-home and the Reachy daemon as macOS LaunchAgents."""
+"""Install ambient-home as a macOS LaunchAgent."""
 
 import os
 import sys
@@ -13,9 +13,8 @@ from xml.sax.saxutils import escape
 from importlib.resources import files
 
 
-DAEMON_LABEL = "ai.ambient-home.daemon"
 APP_LABEL = "ai.ambient-home.app"
-LABELS = (DAEMON_LABEL, APP_LABEL)
+LABELS = (APP_LABEL,)
 
 _UV_CANDIDATES = (
     Path("~/.local/bin/uv"),
@@ -103,8 +102,6 @@ def resolve_paths(
     resolved_repo = (repo_dir or Path.cwd()).resolve()
     if not (resolved_repo / "pyproject.toml").is_file():
         raise FileNotFoundError(f"{resolved_repo} does not contain pyproject.toml; run from the ambient-home checkout")
-    if not (resolved_repo / "scripts" / "run-daemon.sh").is_file():
-        raise FileNotFoundError(f"{resolved_repo}/scripts/run-daemon.sh is missing")
     resolved_home = (home or Path.home()).resolve()
     return ServicePaths(
         repo_dir=resolved_repo,
@@ -154,7 +151,7 @@ def install(paths: ServicePaths, *, dry_run: bool = False) -> list[Path]:
         if result.returncode != 0:
             raise RuntimeError(f"launchctl bootstrap {label} failed: {result.stderr.strip() or result.stdout.strip()}")
         print(f"installed {label} -> {paths.plist_path(label)}")
-    print(f"logs: {paths.log_dir}/daemon.log, {paths.log_dir}/app.log")
+    print(f"logs: {paths.log_dir}/app.log")
     return written
 
 
@@ -190,7 +187,7 @@ def _require_macos(dry_run: bool) -> None:
 
 def install_main() -> int:
     """Entry point for ``ambient-install-service``."""
-    args = _parser("Install ambient-home and reachy-mini-daemon as macOS LaunchAgents.").parse_args()
+    args = _parser("Install ambient-home as a macOS LaunchAgent.").parse_args()
     _require_macos(args.dry_run)
     try:
         paths = resolve_paths(args.repo_dir, args.uv_bin)

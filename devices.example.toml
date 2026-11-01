@@ -1,0 +1,11 @@
+# Copy this file to ~/.ambient-home/devices.toml and install the connector.
+# Install ambient-reachy using the pin in the sesh11/ambient-devices README / current devices branch.
+# [[devices]]
+# id = "reachy"
+# kind = "reachy-mini-lite"
+# enabled = true
+# [devices.config]
+# daemon_status_url = "http://127.0.0.1:8000/api/daemon/status"
+# mic_autorecover = true
+# body_tools = ["dance", "stop_dance", "play_emotion", "stop_emotion", "move_head", "sweep_look", "head_tracking"]
+# camera = true
