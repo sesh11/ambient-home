@@ -1,17 +1,19 @@
 # ambient-home architecture: three public repos
 
-Status: Implemented on this branch: core split (see section 7).
+Status: The core split is implemented on `main` (see section 7). Sections 3–5 retain the
+original interface sketches and migration plan as historical design context, not pending split work.
 
 ## 1. The three parts
 
-ambient-home started as one package that did everything. It is being split into three
-parts. Each part becomes its own public repo.
+ambient-home started as one package that did everything. It is now split across three public repos.
 
 | Repo | What it is | Depends on |
 |---|---|---|
 | **ambient-home** (exists) | The core hub: device gateway, wake word, one-conversation gate, Alfred (the conversation), tools and jobs, status UI, config, version, installer. It also holds the connections to outside services (voice model, coding agents), each behind a small interface, and publishes the tiny `ambient-device-sdk` package: the interface any device connector plugs into. | `garage-sdk` |
-| **ambient-devices** (new) | The official device connectors ("front doors"), one package per device: Reachy Mini Lite now, then Mac mic + speaker, Meta Muse and other house devices. Each has its own test kit. Anyone can also publish a connector for their own device in their own repo, using the same `ambient-device-sdk`. | `ambient-device-sdk` only |
-| **garage** (new, name open) | `garage-sdk` plus the garage service: intake, PM triage, plan, build, test, release, confirm. Generic: it can build ambient-home or any other repo. It has its own small clients for coding agents and trackers. See [garage-interface-v0.md](garage-interface-v0.md) (PR #34). | nothing of ours |
+| **ambient-devices** | The official device connectors ("front doors"), one package per device: Reachy Mini Lite now, then Mac mic + speaker, Meta Muse and other house devices. Each has its own test kit. Anyone can also publish a connector for their own device in their own repo, using the same `ambient-device-sdk`. | `ambient-device-sdk` only |
+| **Garage** | `garage-sdk` plus the separate service: local event monitoring, rule-based incidents, GitHub reporting and manifest-driven Devin dispatch. Triage, plan approval, a test runner, release and confirmation remain future work. See the [draft vision](https://github.com/sesh11/garage/blob/main/docs/vision.md). | nothing of ours |
+
+The diagram includes planned connectors and test runners; it is not a list of implemented integrations.
 
 ```mermaid
 flowchart TB
@@ -210,7 +212,7 @@ orders to them.
 ### 3.4 Tracker (garage)
 
 From today's `garage/github.py`. Only the garage uses a tracker, so it lives there. The
-`garage:*` label names stay in the garage service, not in the GitHub client.
+`factory:*` label names stay in the garage service, not in the GitHub client.
 
 ```python
 class Tracker(Protocol):
@@ -227,8 +229,8 @@ class Tracker(Protocol):
 
 ### 3.5 Events, manifest, work order, proof (garage-sdk)
 
-Defined in [garage-interface-v0.md](garage-interface-v0.md). The core only uses the
-events part: `emit(type, component, level, **data)`, which writes to the local log.
+The proposed full contracts are in [Garage's draft vision](https://github.com/sesh11/garage/blob/main/docs/vision.md).
+The core uses the SDK's events part: `emit(type, component, level, **data)`, which writes to the local log.
 
 ## 4. Where today's files go
 
@@ -249,9 +251,9 @@ events part: `emit(type, component, level, **data)`, which writes to the local l
 | `garage/github.py` | garage (tracker) |
 | ambient-home's rules, test kit and outpost steps (hard-coded in `garage/dispatch.py` today) | ambient-home's `garage.toml` |
 
-`reachy-mini-conversation-app` (Pollen's package) is used today for the conversation
-handler base class, tool classes, prompts and the local audio stream. After the untangle,
-only the Reachy connector depends on it, if at all.
+Before the split, `reachy-mini-conversation-app` (Pollen's package) was used for the conversation
+handler base class, tool classes, prompts and the local audio stream. It is no longer a core dependency;
+device-specific dependencies belong to the connector.
 
 ## 5. How we get there
 
@@ -277,12 +279,12 @@ only the Reachy connector depends on it, if at all.
    re-scoped). At first, packages install straight from GitHub, with no PyPI.
 5. **Add the Mac mic + speaker connector,** then Meta Muse.
 
-## 6. Open questions
+## 6. Resolved packaging questions
 
-1. A name for the garage repo.
-2. Does `garage-sdk` live in the garage repo (suggested) or in its own repo?
+The service is named [Garage](https://github.com/sesh11/garage). Its repository contains the independently
+installable `garage-sdk` distribution in `packages/garage-sdk`.
 
-## 7. What this branch did
+## 7. What the core split implemented
 
 - Published `ambient-device-sdk` v0.1.0 as the device connector contract.
 - Removed Pollen, Reachy daemon, Garage service, incidents, runtime, and telemetry code

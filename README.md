@@ -21,9 +21,13 @@ costs. To configure devices, copy `devices.example.toml` to
 corresponding device connector. Device connectors live in the
 [ambient-devices](https://github.com/sesh11/ambient-devices) project and can be
 developed independently against `ambient-device-sdk`; install `ambient-reachy`
-using the pin in that project's README for the current devices branch. Device configuration
+using the installation instructions in that project's README. The project also provides the
+`ambient-reachy-hw-test` command. Device configuration
 uses `[[devices]]` tables; `devices.example.toml` contains an optional
 Reachy Mini Lite example and its config keys.
+
+[Garage](https://github.com/sesh11/garage) is the separate factory service for incident reporting
+and coding-agent dispatch; ambient-home keeps only its app-specific Garage configuration here.
 
 ## Environment
 
@@ -97,16 +101,16 @@ not needed for tests; provider calls use fakes or HTTP mocks.
 
 ### Testing a feature branch
 
-Use a separate worktree so the always-on checkout is never switched:
+Use a separate worktree so the always-on checkout is never switched. Replace `<branch>` with the feature branch name:
 
 ```bash
-git -C ~/ambient-home fetch origin devin/1793294366-core-split
-git -C ~/ambient-home worktree add ~/ambient-home-core-split origin/devin/1793294366-core-split
-cd ~/ambient-home-core-split && uv sync
+git -C ~/ambient-home fetch origin <branch>
+git -C ~/ambient-home worktree add ~/ambient-home-feature FETCH_HEAD
+cd ~/ambient-home-feature && uv sync
 ```
 
 When finished, remove the feature worktree:
 
 ```bash
-git -C ~/ambient-home worktree remove ~/ambient-home-core-split
+git -C ~/ambient-home worktree remove ~/ambient-home-feature
 ```
